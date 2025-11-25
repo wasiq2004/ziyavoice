@@ -1,10 +1,3 @@
-/**
- * TwilioService - safe, patched version
- * - Uses phone_number column names (not number)
- * - Guards against undefined results from DB
- * - Better error messages (no more .[0] undefined crashes)
- */
-
 const twilio = require('twilio');
 const database = require('../config/database.js');
 const { v4: uuidv4 } = require('uuid');
@@ -379,4 +372,4 @@ class TwilioService {
   }
 }
 
-module.exports = new TwilioService();
+module.exports = TwilioService;
