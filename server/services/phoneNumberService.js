@@ -53,7 +53,28 @@ var PhoneNumberService = /** @class */ (function () {
                         return [4 /*yield*/, database_js_1.default.execute('SELECT * FROM phone_numbers WHERE user_id = ? ORDER BY created_at DESC', [userId])];
                     case 1:
                         rows = (_a.sent())[0];
-                        return [2 /*return*/, rows];
+                        // Normalize fields so frontend always receives consistent structure
+const mapped = rows.map(row => ({
+    id: row.id,
+    userId: row.user_id,
+
+    // Normalize different possible DB column variations:
+    number: row.number || row.phone_number || row.twilio_number || null,
+
+    countryCode: row.country_code,
+    source: row.source,
+    agentName: row.agent_name,
+    agentId: row.agent_id,
+    region: row.region,
+    nextCycle: row.next_cycle,
+    provider: row.provider,
+    twilioSid: row.twilio_sid,
+    capabilities: row.capabilities ? JSON.parse(row.capabilities) : { voice: true },
+    created_at: row.created_at,
+    purchased_at: row.purchased_at
+}));
+
+return [2 /*return*/, mapped];
                     case 2:
                         error_1 = _a.sent();
                         console.error('Error fetching phone numbers:', error_1);
