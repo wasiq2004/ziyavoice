@@ -863,7 +863,7 @@ app.post('/call/start', async (req, res) => {
 
     // Validate Twilio number belongs to user
     const userTwilioNumbers = await twilioService.getVerifiedNumbers(userId);
-    const twilioNumber = userTwilioNumbers.find(num => num.phoneNumber === from);
+    const twilioNumber = userTwilioNumbers.find(num => num.id === from);
 
     if (!twilioNumber) {
       return res.status(400).json({
@@ -971,7 +971,7 @@ app.post('/api/twilio/make-call', async (req, res) => {
     }
     // Validate that 'from' is a verified Twilio number for this user
     const userTwilioNumbers = await twilioService.getVerifiedNumbers(userId);
-    const twilioNumber = userTwilioNumbers.find(num => num.phoneNumber === from);
+    const twilioNumber = userTwilioNumbers.find(num => num.id === from);
     
     if (!twilioNumber) {
       return res.status(400).json({ 
