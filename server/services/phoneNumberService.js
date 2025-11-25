@@ -49,7 +49,7 @@ var PhoneNumberService = /** @class */ (function () {
     // ==========================
     PhoneNumberService.getPhoneNumbers = function (userId) {
         return __awaiter(this, void 0, void 0, function () {
-            var rows, mapped, error_1;
+            var queryResult, rows, mapped, error_1;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -59,31 +59,60 @@ var PhoneNumberService = /** @class */ (function () {
                             [userId]
                         )];
                     case 1:
-                        rows = (_a.sent())[0];
+                        queryResult = _a.sent();
+                        rows = queryResult && queryResult.length ? queryResult[0] : queryResult;
+                        // Defensive: ensure rows is an array
+                        if (!rows || !Array.isArray(rows)) rows = [];
 
                         // Normalize all DB rows to a consistent structure
                         mapped = rows.map(function (row) {
+                            // Safe capabilities parsing
+                            var caps = { voice: true };
+                            try {
+                                if (row && row.capabilities) {
+                                    if (typeof row.capabilities === 'string') {
+                                        caps = JSON.parse(row.capabilities);
+                                    }
+                                    else if (typeof row.capabilities === 'object') {
+                                        caps = row.capabilities;
+                                    }
+                                }
+                            }
+                            catch (e) {
+                                // If parsing fails, keep default capabilities and log small warning
+                                try {
+                                    console.warn("Warning: failed to parse capabilities for phone id=" + (row && row.id) + " - using default", e && e.message);
+                                }
+                                catch (_) {}
+                                caps = { voice: true };
+                            }
+
+                            // Normalize the main number field(s) consistently for frontend
+                            var mainNumber = null;
+                            if (row) {
+                                mainNumber = row.number || row.phone_number || row.twilio_number || row.twilioSid || null;
+                            }
+
                             return {
-                                id: row.id,
-                                userId: row.user_id,
+                                id: row ? row.id : null,
+                                userId: row ? row.user_id : null,
+                                // consistent names used by frontend
+                                number: mainNumber,
+                                phoneNumber: mainNumber,
+                                phone_number: mainNumber,
 
-                                // 🔥 IMPORTANT NORMALIZATION FIX
-                                number: row.number || null,
-                                phoneNumber: row.number || null,   // <-- ADD THIS
-                                phone_number: row.number || null,
+                                countryCode: row ? row.country_code : null,
+                                source: row ? row.source : null,
+                                agentName: row ? row.agent_name : null,
+                                agentId: row ? row.agent_id : null,
+                                region: row ? row.region : null,
+                                nextCycle: row ? row.next_cycle : null,
+                                provider: row ? row.provider : null,
+                                twilioSid: row ? row.twilio_sid : null,
+                                capabilities: caps,
 
-                                countryCode: row.country_code,
-                                source: row.source,
-                                agentName: row.agent_name,
-                                agentId: row.agent_id,
-                                region: row.region,
-                                nextCycle: row.next_cycle,
-                                provider: row.provider,
-                                twilioSid: row.twilio_sid,
-                                capabilities: row.capabilities ? JSON.parse(row.capabilities) : { voice: true },
-
-                                created_at: row.created_at || row.purchased_at,
-                                purchased_at: row.purchased_at
+                                created_at: (row && (row.created_at || row.purchased_at)) || null,
+                                purchased_at: (row && row.purchased_at) || null
                             };
                         });
 
@@ -91,7 +120,13 @@ var PhoneNumberService = /** @class */ (function () {
 
                     case 2:
                         error_1 = _a.sent();
-                        console.error("Error fetching phone numbers:", error_1);
+                        // Log full error so we can debug actual DB error in logs
+                        try {
+                            console.error("FULL DB ERROR fetching phone numbers:", JSON.stringify(error_1, Object.getOwnPropertyNames(error_1)));
+                        }
+                        catch (_) {
+                            console.error("Error fetching phone numbers (non-serializable):", error_1);
+                        }
                         throw new Error("Failed to fetch phone numbers");
                     case 3: return [2 /*return*/];
                 }
@@ -104,7 +139,7 @@ var PhoneNumberService = /** @class */ (function () {
     // ==========================
     PhoneNumberService.getPhoneNumberById = function (userId, id) {
         return __awaiter(this, void 0, void 0, function () {
-            var rows, row, normalized, error_2;
+            var queryResult, rows, row, caps, mainNumber, normalized, error_2;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -114,18 +149,39 @@ var PhoneNumberService = /** @class */ (function () {
                             [userId, id]
                         )];
                     case 1:
-                        rows = (_a.sent())[0];
-                        if (rows.length === 0) return [2 /*return*/, null];
-
+                        queryResult = _a.sent();
+                        rows = queryResult && queryResult.length ? queryResult[0] : queryResult;
+                        if (!rows || rows.length === 0) return [2 /*return*/, null];
                         row = rows[0];
+
+                        // Safe capabilities parse
+                        caps = { voice: true };
+                        try {
+                            if (row && row.capabilities) {
+                                if (typeof row.capabilities === 'string') {
+                                    caps = JSON.parse(row.capabilities);
+                                }
+                                else if (typeof row.capabilities === 'object') {
+                                    caps = row.capabilities;
+                                }
+                            }
+                        }
+                        catch (e) {
+                            try {
+                                console.warn("Warning: failed to parse capabilities for phone id=" + (row && row.id) + " - using default", e && e.message);
+                            }
+                            catch (_) {}
+                            caps = { voice: true };
+                        }
+
+                        mainNumber = row.number || row.phone_number || row.twilio_number || row.twilioSid || null;
 
                         normalized = {
                             id: row.id,
                             userId: row.user_id,
-                            number: row.number || null,
-                            phoneNumber: row.number || null,   // <-- ADD THIS
-                            phone_number: row.number || null,
-
+                            number: mainNumber,
+                            phoneNumber: mainNumber,
+                            phone_number: mainNumber,
                             countryCode: row.country_code,
                             source: row.source,
                             agentName: row.agent_name,
@@ -134,7 +190,7 @@ var PhoneNumberService = /** @class */ (function () {
                             nextCycle: row.next_cycle,
                             provider: row.provider,
                             twilioSid: row.twilio_sid,
-                            capabilities: row.capabilities ? JSON.parse(row.capabilities) : { voice: true },
+                            capabilities: caps,
                             created_at: row.created_at || row.purchased_at,
                             purchased_at: row.purchased_at
                         };
@@ -143,7 +199,12 @@ var PhoneNumberService = /** @class */ (function () {
 
                     case 2:
                         error_2 = _a.sent();
-                        console.error("Error fetching phone number:", error_2);
+                        try {
+                            console.error("FULL DB ERROR fetching phone number by id:", JSON.stringify(error_2, Object.getOwnPropertyNames(error_2)));
+                        }
+                        catch (_) {
+                            console.error("Error fetching phone number (non-serializable):", error_2);
+                        }
                         throw new Error("Failed to fetch phone number");
                     case 3: return [2 /*return*/];
                 }
@@ -164,11 +225,9 @@ var PhoneNumberService = /** @class */ (function () {
                         id = (0, uuid_1.v4)();
                         number = phoneNumberData.number, countryCode = phoneNumberData.countryCode, source = phoneNumberData.source, _a = phoneNumberData.agentName, agentName = _a === void 0 ? null : _a, _b = phoneNumberData.agentId, agentId = _b === void 0 ? null : _b, region = phoneNumberData.region, nextCycle = phoneNumberData.nextCycle, provider = phoneNumberData.provider, _c = phoneNumberData.twilioSid, twilioSid = _c === void 0 ? null : _c, _d = phoneNumberData.capabilities, capabilities = _d === void 0 ? null : _d;
                         nextCycleDate = nextCycle || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-                        return [4 /*yield*/, database_js_1.default.execute(
-                            "INSERT INTO phone_numbers \
+                        return [4 /*yield*/, database_js_1.default.execute("INSERT INTO phone_numbers \
 (id, user_id, number, country_code, source, agent_name, agent_id, region, next_cycle, provider, twilio_sid, capabilities, purchased_at) \
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
-                            [
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())", [
                                 id,
                                 userId,
                                 number,
@@ -181,8 +240,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
                                 provider,
                                 twilioSid,
                                 JSON.stringify(capabilities || { voice: true })
-                            ]
-                        )];
+                            ])];
                     case 1:
                         _e.sent();
                         return [4 /*yield*/, this.getPhoneNumberById(userId, id)];
@@ -190,7 +248,12 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
                         return [2 /*return*/, _e.sent()];
                     case 3:
                         error_3 = _e.sent();
-                        console.error("Error creating phone number:", error_3);
+                        try {
+                            console.error("FULL DB ERROR creating phone number:", JSON.stringify(error_3, Object.getOwnPropertyNames(error_3)));
+                        }
+                        catch (_) {
+                            console.error("Error creating phone number (non-serializable):", error_3);
+                        }
                         throw new Error("Failed to create phone number");
                     case 4: return [2 /*return*/];
                 }
@@ -213,7 +276,6 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
                         existing = _a.sent();
                         if (!existing)
                             throw new Error("Phone number not found");
-
                         fields = [];
                         values = [];
                         fieldMapping = {
@@ -223,7 +285,6 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
                             nextCycle: "next_cycle",
                             twilioSid: "twilio_sid"
                         };
-
                         Object.keys(updateData).forEach(function (key) {
                             if (key !== "id" && key !== "userId") {
                                 var dbField = fieldMapping[key] || key;
@@ -231,18 +292,11 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
                                 values.push(updateData[key]);
                             }
                         });
-
                         if (fields.length === 0)
                             return [2 /*return*/, existing];
-
                         values.push(id);
                         values.push(userId);
-
-                        return [4 /*yield*/, database_js_1.default.execute(
-                            "UPDATE phone_numbers SET "
-                                .concat(fields.join(", "), " WHERE id = ? AND user_id = ?"),
-                            values
-                        )];
+                        return [4 /*yield*/, database_js_1.default.execute("UPDATE phone_numbers SET " + fields.join(", ") + " WHERE id = ? AND user_id = ?", values)];
                     case 2:
                         _a.sent();
                         return [4 /*yield*/, this.getPhoneNumberById(userId, id)];
@@ -250,7 +304,12 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
                         return [2 /*return*/, _a.sent()];
                     case 4:
                         error_4 = _a.sent();
-                        console.error("Error updating phone number:", error_4);
+                        try {
+                            console.error("FULL DB ERROR updating phone number:", JSON.stringify(error_4, Object.getOwnPropertyNames(error_4)));
+                        }
+                        catch (_) {
+                            console.error("Error updating phone number (non-serializable):", error_4);
+                        }
                         throw new Error("Failed to update phone number: " + error_4.message);
                     case 5: return [2 /*return*/];
                 }
@@ -273,17 +332,18 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
                         existing = _a.sent();
                         if (!existing)
                             throw new Error("Phone number not found");
-
-                        return [4 /*yield*/, database_js_1.default.execute(
-                            "DELETE FROM phone_numbers WHERE id = ? AND user_id = ?",
-                            [id, userId]
-                        )];
+                        return [4 /*yield*/, database_js_1.default.execute("DELETE FROM phone_numbers WHERE id = ? AND user_id = ?", [id, userId])];
                     case 2:
                         _a.sent();
                         return [2 /*return*/, true];
                     case 3:
                         error_5 = _a.sent();
-                        console.error("Error deleting phone number:", error_5);
+                        try {
+                            console.error("FULL DB ERROR deleting phone number:", JSON.stringify(error_5, Object.getOwnPropertyNames(error_5)));
+                        }
+                        catch (_) {
+                            console.error("Error deleting phone number (non-serializable):", error_5);
+                        }
                         throw new Error("Failed to delete phone number");
                     case 4: return [2 /*return*/];
                 }
@@ -316,7 +376,12 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
                         return [2 /*return*/, _a.sent()];
                     case 2:
                         error_6 = _a.sent();
-                        console.error("Error importing phone number:", error_6);
+                        try {
+                            console.error("FULL DB ERROR importing phone number:", JSON.stringify(error_6, Object.getOwnPropertyNames(error_6)));
+                        }
+                        catch (_) {
+                            console.error("Error importing phone number (non-serializable):", error_6);
+                        }
                         throw new Error("Failed to import phone number: " + error_6.message);
                     case 3: return [2 /*return*/];
                 }
