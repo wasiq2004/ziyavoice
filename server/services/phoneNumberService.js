@@ -69,6 +69,7 @@ var PhoneNumberService = /** @class */ (function () {
 
                                 // 🔥 IMPORTANT NORMALIZATION FIX
                                 number: row.number || null,
+                                phoneNumber: row.number || null,   // <-- ADD THIS
                                 phone_number: row.number || null,
 
                                 countryCode: row.country_code,
@@ -122,7 +123,9 @@ var PhoneNumberService = /** @class */ (function () {
                             id: row.id,
                             userId: row.user_id,
                             number: row.number || null,
+                            phoneNumber: row.number || null,   // <-- ADD THIS
                             phone_number: row.number || null,
+
                             countryCode: row.country_code,
                             source: row.source,
                             agentName: row.agent_name,
