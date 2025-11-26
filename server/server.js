@@ -1202,6 +1202,80 @@ app.delete('/api/twilio/accounts/:accountId', async (req, res) => {
   }
 });
 
+// Twilio Voice Webhook - Returns TwiML to start Media Stream
+app.post('/api/twilio/voice', async (req, res) => {
+  try {
+    const { CallSid, From, To } = req.body;
+    const { userId, campaignId, agentId, callId } = req.query;
+
+    console.log('📞 Twilio voice webhook:', { CallSid, From, To, agentId });
+
+    const appUrl = process.env.APP_URL;
+    const wsUrl = appUrl.replace('https://', 'wss://').replace('http://', 'ws://');
+    const streamUrl = `${wsUrl}/api/call?callId=${callId || CallSid}&agentId=${agentId || ''}&contactId=${CallSid}`;
+
+    console.log('🔗 Stream URL:', streamUrl);
+
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Connect>
+        <Stream url="${streamUrl}" />
+    </Connect>
+</Response>`;
+
+    res.type('text/xml');
+    res.send(twiml);
+
+    if (callId) {
+      await mysqlPool.execute(
+        'UPDATE calls SET status = ? WHERE id = ?',
+        ['in-progress', callId]
+      );
+    }
+  } catch (error) {
+    console.error('❌ Voice webhook error:', error);
+    res.status(500).send('Error');
+  }
+});
+
+// Twilio Status Callback
+app.post('/api/twilio/callback', async (req, res) => {
+  try {
+    const { CallSid, CallStatus, CallDuration } = req.body;
+    const { callId } = req.query;
+
+    console.log('📊 Status callback:', { CallSid, CallStatus, CallDuration });
+
+    const statusMap = {
+      'queued': 'initiated',
+      'ringing': 'ringing',
+      'in-progress': 'in-progress',
+      'completed': 'completed',
+      'busy': 'busy',
+      'failed': 'failed',
+      'no-answer': 'no-answer'
+    };
+
+    const status = statusMap[CallStatus] || CallStatus;
+
+    if (callId) {
+      await mysqlPool.execute(
+        `UPDATE calls 
+         SET status = ?, duration = ?,
+             ended_at = CASE WHEN ? IN ('completed', 'busy', 'failed', 'no-answer') 
+                        THEN NOW() ELSE ended_at END
+         WHERE id = ?`,
+        [status, CallDuration || 0, status, callId]
+      );
+    }
+
+    res.status(200).send('OK');
+  } catch (error) {
+    console.error('❌ Callback error:', error);
+    res.status(500).send('Error');
+  }
+});
+
 // Agent endpoints
 // Get all agents for a user
 app.get('/api/agents', async (req, res) => {
@@ -1873,77 +1947,3 @@ app.get("/db-conn-status", async (req, res) => {
     res.json({ success: false, error: error.message || "No message" });
   }
 });
-// Twilio Voice Webhook - Returns TwiML to start Media Stream
-app.post('/api/twilio/voice', async (req, res) => {
-  try {
-    const { CallSid, From, To } = req.body;
-    const { userId, campaignId, agentId, callId } = req.query;
-
-    console.log('📞 Twilio voice webhook:', { CallSid, From, To, agentId });
-
-    const appUrl = process.env.APP_URL;
-    const wsUrl = appUrl.replace('https://', 'wss://').replace('http://', 'ws://');
-    const streamUrl = `${wsUrl}/api/call?callId=${callId || CallSid}&agentId=${agentId || ''}&contactId=${CallSid}`;
-
-    console.log('🔗 Stream URL:', streamUrl);
-
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Connect>
-        <Stream url="${streamUrl}" />
-    </Connect>
-</Response>`;
-
-    res.type('text/xml');
-    res.send(twiml);
-
-    if (callId) {
-      await mysqlPool.execute(
-        'UPDATE calls SET status = ? WHERE id = ?',
-        ['in-progress', callId]
-      );
-    }
-  } catch (error) {
-    console.error('❌ Voice webhook error:', error);
-    res.status(500).send('Error');
-  }
-});
-
-// Twilio Status Callback
-app.post('/api/twilio/callback', async (req, res) => {
-  try {
-    const { CallSid, CallStatus, CallDuration } = req.body;
-    const { callId } = req.query;
-
-    console.log('📊 Status callback:', { CallSid, CallStatus, CallDuration });
-
-    const statusMap = {
-      'queued': 'initiated',
-      'ringing': 'ringing',
-      'in-progress': 'in-progress',
-      'completed': 'completed',
-      'busy': 'busy',
-      'failed': 'failed',
-      'no-answer': 'no-answer'
-    };
-
-    const status = statusMap[CallStatus] || CallStatus;
-
-    if (callId) {
-      await mysqlPool.execute(
-        `UPDATE calls 
-         SET status = ?, duration = ?,
-             ended_at = CASE WHEN ? IN ('completed', 'busy', 'failed', 'no-answer') 
-                        THEN NOW() ELSE ended_at END
-         WHERE id = ?`,
-        [status, CallDuration || 0, status, callId]
-      );
-    }
-
-    res.status(200).send('OK');
-  } catch (error) {
-    console.error('❌ Callback error:', error);
-    res.status(500).send('Error');
-  }
-});
-
