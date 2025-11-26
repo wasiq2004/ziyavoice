@@ -230,17 +230,55 @@ class TwilioService {
   }
 
   async getVerifiedNumbers(userId) {
-  try {
-    const [rows] = await database.execute(
-      `SELECT id, user_id, phone_number, region, provider, verified, twilio_account_sid, twilio_auth_token, created_at
-       FROM user_twilio_numbers 
-       WHERE user_id = ? AND verified = TRUE
-       ORDER BY created_at DESC`,
-      [userId]
-    ).catch(err => { throw new Error(`DB error (user_twilio_numbers select): ${err.message}`); });
+    try {
+      const [rows] = await database.execute(
+        `SELECT id, user_id, phone_number, region, provider, verified, twilio_account_sid, twilio_auth_token, created_at
+         FROM user_twilio_numbers 
+         WHERE user_id = ? AND verified = TRUE
+         ORDER BY created_at DESC`,
+        [userId]
+      ).catch(err => { throw new Error(`DB error (user_twilio_numbers select): ${err.message}`); });
 
-    const safeRows = rows || [];
-    return safeRows.map(row => {
+      const safeRows = rows || [];
+      return safeRows.map(row => {
+        // Decrypt the auth token before returning
+        let decryptedAuthToken = row.twilio_auth_token;
+        try {
+          decryptedAuthToken = decrypt(row.twilio_auth_token);
+        } catch (decryptError) {
+          console.error('Error decrypting auth token for number:', row.phone_number, decryptError);
+        }
+        
+        return {
+          id: row.id,
+          userId: row.user_id,
+          phoneNumber: row.phone_number,
+          region: row.region,
+          provider: row.provider,
+          verified: row.verified,
+          twilioAccountSid: row.twilio_account_sid,
+          twilioAuthToken: decryptedAuthToken,
+          createdAt: row.created_at
+        };
+      });
+    } catch (err) {
+      console.error('Error fetching verified numbers:', err);
+      throw new Error('Failed to fetch verified numbers');
+    }
+  }
+
+  async getTwilioNumberById(userId, numberId) {
+    try {
+      const [rows] = await database.execute(
+        `SELECT id, user_id, phone_number, region, provider, verified, twilio_account_sid, twilio_auth_token, created_at
+         FROM user_twilio_numbers 
+         WHERE id = ? AND user_id = ?`,
+        [numberId, userId]
+      ).catch(err => { throw new Error(`DB error (user_twilio_numbers select by id): ${err.message}`); });
+
+      if (!rows || rows.length === 0) return null;
+      const row = rows[0];
+      
       // Decrypt the auth token before returning
       let decryptedAuthToken = row.twilio_auth_token;
       try {
@@ -260,50 +298,13 @@ class TwilioService {
         twilioAuthToken: decryptedAuthToken,
         createdAt: row.created_at
       };
-    });
-    } catch (err) {
-      console.error('Error fetching verified numbers:', err);
-      throw new Error('Failed to fetch verified numbers');
-    }
-  }
-
- async getTwilioNumberById(userId, numberId) {
-  try {
-    const [rows] = await database.execute(
-      `SELECT id, user_id, phone_number, region, provider, verified, twilio_account_sid, twilio_auth_token, created_at
-       FROM user_twilio_numbers 
-       WHERE id = ? AND user_id = ?`,
-      [numberId, userId]
-    ).catch(err => { throw new Error(`DB error (user_twilio_numbers select by id): ${err.message}`); });
-
-    if (!rows || rows.length === 0) return null;
-    const row = rows[0];
-    
-    // Decrypt the auth token before returning
-    let decryptedAuthToken = row.twilio_auth_token;
-    try {
-      decryptedAuthToken = decrypt(row.twilio_auth_token);
-    } catch (decryptError) {
-      console.error('Error decrypting auth token for number:', row.phone_number, decryptError);
-    }
-    
-    return {
-      id: row.id,
-      userId: row.user_id,
-      phoneNumber: row.phone_number,
-      region: row.region,
-      provider: row.provider,
-      verified: row.verified,
-      twilioAccountSid: row.twilio_account_sid,
-      twilioAuthToken: decryptedAuthToken,
-      createdAt: row.created_at
-    };
     } catch (err) {
       console.error('Error fetching Twilio number:', err);
       throw new Error('Failed to fetch Twilio number');
     }
   }
 
+  // ========== CRITICAL FIX: Updated webhook URLs ==========
   async createCall(params) {
     try {
       const twilioNumber = await this.getTwilioNumberById(params.userId, params.twilioNumberId);
@@ -311,17 +312,29 @@ class TwilioService {
       if (!twilioNumber.verified) throw new Error('Twilio number is not verified');
 
       const client = this.getClientForUser(twilioNumber.twilioAccountSid, twilioNumber.twilioAuthToken);
+      
+      // ✅ FIXED: Use correct webhook URLs that match server.js endpoints
+      const voiceUrl = `${params.appUrl}/api/twilio/voice?userId=${params.userId}&agentId=${params.agentId}&callId=${params.callId}`;
+      const statusCallback = `${params.appUrl}/api/twilio/callback?userId=${params.userId}&callId=${params.callId}`;
+      
+      console.log('🔗 Creating Twilio call with webhooks:');
+      console.log('   Voice URL:', voiceUrl);
+      console.log('   Status Callback:', statusCallback);
+      
       const call = await client.calls.create({
         to: params.to,
         from: twilioNumber.phoneNumber,
-        url: `${params.appUrl}/api/twilio/twiml?callId=${params.callId}&agentId=${params.agentId}`,
-        statusCallback: `${params.appUrl}/api/twilio/status?callId=${params.callId}`,
+        url: voiceUrl,
+        statusCallback: statusCallback,
         statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed', 'failed', 'busy', 'no-answer'],
-        statusCallbackMethod: 'POST'
+        statusCallbackMethod: 'POST',
+        record: false // Set to true if you want call recording
       });
+      
+      console.log('✅ Twilio call created:', call.sid);
       return call;
     } catch (err) {
-      console.error('Error creating Twilio call:', err);
+      console.error('❌ Error creating Twilio call:', err);
       throw new Error(`Failed to create call: ${err.message}`);
     }
   }
