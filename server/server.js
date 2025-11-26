@@ -940,7 +940,8 @@ app.post('/call/start', async (req, res) => {
 app.post('/api/twilio/make-call', async (req, res) => {
   try {
     const { userId, from, to, agentId } = req.body;
-     if (!userId) {  
+    
+    if (!userId) {  
       return res.status(400).json({ success: false, message: 'User ID is required' });
     }
     
@@ -957,26 +958,43 @@ app.post('/api/twilio/make-call', async (req, res) => {
       return res.status(400).json({ success: false, message: 'To number is required' });
     }
     
-    // Validate phone number formats
-    if (!/^\+?[1-9]\d{1,14}$/.test(from)) {
-      return res.status(400).json({ success: false, message: 'From number must be a valid Twilio number in E.164 format (e.g., +1234567890)' });
-    }
-    
-    if (!/^\+?[1-9]\d{1,14}$/.test(to)) {
-      return res.status(400).json({ success: false, message: 'To number must be in E.164 format (e.g., +1234567890)' });
-    }
-    
     if (!agentId) {
       return res.status(400).json({ success: false, message: 'Agent ID is required' });
     }
-    // Validate that 'from' is a verified Twilio number for this user
+    
+    // Get all verified Twilio numbers for this user
     const userTwilioNumbers = await twilioService.getVerifiedNumbers(userId);
-    const twilioNumber = userTwilioNumbers.find(num => num.id === from);
+    
+    // Find the Twilio number record by ID (from could be a UUID)
+    let twilioNumber = userTwilioNumbers.find(num => num.id === from);
+    
+    // If not found by ID, try finding by phone number (in case from is already a phone number)
+    if (!twilioNumber) {
+      twilioNumber = userTwilioNumbers.find(num => num.number === from || num.phoneNumber === from);
+    }
     
     if (!twilioNumber) {
       return res.status(400).json({ 
         success: false, 
         message: 'From number must be a verified Twilio number for this user' 
+      });
+    }
+    
+    // Extract the actual phone number from the twilioNumber object
+    const fromPhoneNumber = twilioNumber.number || twilioNumber.phoneNumber;
+    
+    // Validate phone number formats
+    if (!/^\+?[1-9]\d{1,14}$/.test(fromPhoneNumber)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'From number must be a valid Twilio number in E.164 format (e.g., +1234567890)' 
+      });
+    }
+    
+    if (!/^\+?[1-9]\d{1,14}$/.test(to)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'To number must be in E.164 format (e.g., +1234567890)' 
       });
     }
     
@@ -992,16 +1010,17 @@ app.post('/api/twilio/make-call', async (req, res) => {
     await database.execute(`INSERT INTO calls 
       (id, phone_number_id, user_id, agent_id, from_number, to_number, status, twilio_number_id, started_at)
       VALUES (?, ?, ?, ?, ?, ?, 'initiated', ?, NOW())`, 
-      [callId, twilioNumber.id, userId, agentId, from, to, twilioNumber.id]);
+      [callId, twilioNumber.id, userId, agentId, fromPhoneNumber, to, twilioNumber.id]);
     
-    // Create the actual Twilio call
+    // Create the actual Twilio call using the ACTUAL PHONE NUMBER
     const call = await twilioService.createCall({
       userId: userId,
       twilioNumberId: twilioNumber.id,
       to: to,
       agentId: agentId,
       callId: callId,
-      appUrl: cleanAppUrl
+      appUrl: cleanAppUrl,
+      from: fromPhoneNumber  // ← ADD THIS: Pass the actual phone number
     });
     
     // Update call record with Twilio call SID
@@ -1014,7 +1033,7 @@ app.post('/api/twilio/make-call', async (req, res) => {
         id: callId,
         userId,
         callSid: call.sid,
-        fromNumber: from,
+        fromNumber: fromPhoneNumber,  // ← Return the actual phone number
         toNumber: to,
         agentId: agentId,
         direction: 'outbound',
