@@ -96,7 +96,7 @@ var AuthService = /** @class */ (function () {
      * @param password User's password
      * @returns Created user object
      */
-    AuthService.prototype.registerUser = function (email, password) {
+    AuthService.prototype.registerUser = function (email, username, password) {
         return __awaiter(this, void 0, void 0, function () {
             var existingUsers, saltRounds, passwordHash, userId, result, error_2;
             return __generator(this, function (_a) {
@@ -114,13 +114,14 @@ var AuthService = /** @class */ (function () {
                     case 2:
                         passwordHash = _a.sent();
                         userId = Math.random().toString(36).substring(2, 15);
-                        return [4 /*yield*/, this.mysqlPool.execute('INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)', [userId, email, passwordHash])];
+                        return [4 /*yield*/, this.mysqlPool.execute('INSERT INTO users (id, email, username, password_hash) VALUES (?, ?, ?, ?)', [userId, email, username, passwordHash])];
                     case 3:
                         result = (_a.sent())[0];
                         return [2 /*return*/, {
-                                id: userId,
-                                email: email
-                            }];
+                        id: userId,
+                        email: email,
+                        username: username
+                    }];
                     case 4:
                         error_2 = _a.sent();
                         console.error('Registration error:', error_2);
