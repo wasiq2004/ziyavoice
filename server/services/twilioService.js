@@ -230,44 +230,25 @@ class TwilioService {
   }
 
   async getVerifiedNumbers(userId) {
-    try {
-      const [rows] = await database.execute(
-        `SELECT id, user_id, phone_number, region, provider, verified, twilio_account_sid, twilio_auth_token, created_at
-         FROM user_twilio_numbers 
-         WHERE user_id = ? AND verified = TRUE
-         ORDER BY created_at DESC`,
-        [userId]
-      ).catch(err => { throw new Error(`DB error (user_twilio_numbers select): ${err.message}`); });
+  try {
+    const [rows] = await database.execute(
+      `SELECT id, user_id, phone_number, region, provider, verified, twilio_account_sid, twilio_auth_token, created_at
+       FROM user_twilio_numbers 
+       WHERE user_id = ? AND verified = TRUE
+       ORDER BY created_at DESC`,
+      [userId]
+    ).catch(err => { throw new Error(`DB error (user_twilio_numbers select): ${err.message}`); });
 
-      const safeRows = rows || [];
-      return safeRows.map(row => ({
-        id: row.id,
-        userId: row.user_id,
-        phoneNumber: row.phone_number,
-        region: row.region,
-        provider: row.provider,
-        verified: row.verified,
-        twilioAccountSid: row.twilio_account_sid,
-        twilioAuthToken: row.twilio_auth_token,
-        createdAt: row.created_at
-      }));
-    } catch (err) {
-      console.error('Error fetching verified numbers:', err);
-      throw new Error('Failed to fetch verified numbers');
-    }
-  }
-
-  async getTwilioNumberById(userId, numberId) {
-    try {
-      const [rows] = await database.execute(
-        `SELECT id, user_id, phone_number, region, provider, verified, twilio_account_sid, twilio_auth_token, created_at
-         FROM user_twilio_numbers 
-         WHERE id = ? AND user_id = ?`,
-        [numberId, userId]
-      ).catch(err => { throw new Error(`DB error (user_twilio_numbers select by id): ${err.message}`); });
-
-      if (!rows || rows.length === 0) return null;
-      const row = rows[0];
+    const safeRows = rows || [];
+    return safeRows.map(row => {
+      // Decrypt the auth token before returning
+      let decryptedAuthToken = row.twilio_auth_token;
+      try {
+        decryptedAuthToken = decrypt(row.twilio_auth_token);
+      } catch (decryptError) {
+        console.error('Error decrypting auth token for number:', row.phone_number, decryptError);
+      }
+      
       return {
         id: row.id,
         userId: row.user_id,
@@ -276,9 +257,47 @@ class TwilioService {
         provider: row.provider,
         verified: row.verified,
         twilioAccountSid: row.twilio_account_sid,
-        twilioAuthToken: row.twilio_auth_token,
+        twilioAuthToken: decryptedAuthToken,
         createdAt: row.created_at
       };
+    });
+    } catch (err) {
+      console.error('Error fetching verified numbers:', err);
+      throw new Error('Failed to fetch verified numbers');
+    }
+  }
+
+ async getTwilioNumberById(userId, numberId) {
+  try {
+    const [rows] = await database.execute(
+      `SELECT id, user_id, phone_number, region, provider, verified, twilio_account_sid, twilio_auth_token, created_at
+       FROM user_twilio_numbers 
+       WHERE id = ? AND user_id = ?`,
+      [numberId, userId]
+    ).catch(err => { throw new Error(`DB error (user_twilio_numbers select by id): ${err.message}`); });
+
+    if (!rows || rows.length === 0) return null;
+    const row = rows[0];
+    
+    // Decrypt the auth token before returning
+    let decryptedAuthToken = row.twilio_auth_token;
+    try {
+      decryptedAuthToken = decrypt(row.twilio_auth_token);
+    } catch (decryptError) {
+      console.error('Error decrypting auth token for number:', row.phone_number, decryptError);
+    }
+    
+    return {
+      id: row.id,
+      userId: row.user_id,
+      phoneNumber: row.phone_number,
+      region: row.region,
+      provider: row.provider,
+      verified: row.verified,
+      twilioAccountSid: row.twilio_account_sid,
+      twilioAuthToken: decryptedAuthToken,
+      createdAt: row.created_at
+    };
     } catch (err) {
       console.error('Error fetching Twilio number:', err);
       throw new Error('Failed to fetch Twilio number');
