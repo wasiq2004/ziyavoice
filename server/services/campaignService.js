@@ -122,23 +122,6 @@ var CampaignService = /** @class */ (function () {
             });
         });
     };
-    async deleteRecord(recordId, campaignId, userId) {
- try {
-    // Verify campaign belongs to user
-    const campaign = await this.getCampaign(campaignId, userId);
-    if (!campaign) {
-      throw new Error('Campaign not found');
-    }
-    
-    await this.mysqlPool.execute(
-      'DELETE FROM campaign_records WHERE id = ? AND campaign_id = ?',
-      [recordId, campaignId]
-    );
-  } catch (error) {
-    console.error('Error deleting record:', error);
-    throw error;
-  }
-}
     /**
      * Set caller phone for campaign
      * @param id Campaign ID
