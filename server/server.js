@@ -965,12 +965,12 @@ app.post('/api/twilio/make-call', async (req, res) => {
     // Get all verified Twilio numbers for this user
     const userTwilioNumbers = await twilioService.getVerifiedNumbers(userId);
     
-    // Find the Twilio number record by ID (from could be a UUID)
+    // Find the Twilio number record by ID (from is a UUID from user_twilio_numbers.id)
     let twilioNumber = userTwilioNumbers.find(num => num.id === from);
     
-    // If not found by ID, try finding by phone number (in case from is already a phone number)
+    // If not found by ID, try finding by phone number (fallback)
     if (!twilioNumber) {
-      twilioNumber = userTwilioNumbers.find(num => num.number === from || num.phoneNumber === from);
+      twilioNumber = userTwilioNumbers.find(num => num.phoneNumber === from);
     }
     
     if (!twilioNumber) {
@@ -981,7 +981,7 @@ app.post('/api/twilio/make-call', async (req, res) => {
     }
     
     // Extract the actual phone number from the twilioNumber object
-    const fromPhoneNumber = twilioNumber.number || twilioNumber.phoneNumber;
+    const fromPhoneNumber = twilioNumber.phoneNumber;
     
     // Validate phone number formats
     if (!/^\+?[1-9]\d{1,14}$/.test(fromPhoneNumber)) {
@@ -1005,35 +1005,61 @@ app.post('/api/twilio/make-call', async (req, res) => {
     const appUrl = process.env.APP_URL || `http://${process.env.SERVER_DOMAIN || 'localhost:5000'}`;
     const cleanAppUrl = appUrl.replace(/\/$/, '');
     
-    // Create call record in database
+    // Get or create phone_numbers entry for the from number
     const database = require('./config/database.js').default;
-    await database.execute(`INSERT INTO calls 
+    
+    const [phoneRows] = await database.execute(
+      'SELECT id FROM phone_numbers WHERE user_id = ? AND phone_number = ?',
+      [userId, fromPhoneNumber]
+    );
+    
+    let phoneNumberId;
+    if (phoneRows.length > 0) {
+      phoneNumberId = phoneRows[0].id;
+    } else {
+      // Create phone_numbers entry if it doesn't exist
+      phoneNumberId = require('uuid').v4();
+      await database.execute(
+        `INSERT INTO phone_numbers 
+        (id, user_id, phone_number, source, provider, created_at) 
+        VALUES (?, ?, ?, 'twilio', 'twilio', NOW())`,
+        [phoneNumberId, userId, fromPhoneNumber]
+      );
+    }
+    
+    // Create call record in database with the ACTUAL PHONE NUMBER
+    await database.execute(
+      `INSERT INTO calls 
       (id, phone_number_id, user_id, agent_id, from_number, to_number, status, twilio_number_id, started_at)
       VALUES (?, ?, ?, ?, ?, ?, 'initiated', ?, NOW())`, 
-      [callId, twilioNumber.id, userId, agentId, fromPhoneNumber, to, twilioNumber.id]);
+      [callId, phoneNumberId, userId, agentId, fromPhoneNumber, to, twilioNumber.id]
+    );
     
-    // Create the actual Twilio call using the ACTUAL PHONE NUMBER
+    // Create the actual Twilio call
+    // twilioService.createCall will use twilioNumber.phoneNumber internally
     const call = await twilioService.createCall({
       userId: userId,
       twilioNumberId: twilioNumber.id,
       to: to,
       agentId: agentId,
       callId: callId,
-      appUrl: cleanAppUrl,
-      from: fromPhoneNumber  // ← ADD THIS: Pass the actual phone number
+      appUrl: cleanAppUrl
     });
     
     // Update call record with Twilio call SID
-    await database.execute('UPDATE calls SET call_sid = ? WHERE id = ?', [call.sid, callId]);
+    await database.execute(
+      'UPDATE calls SET call_sid = ? WHERE id = ?', 
+      [call.sid, callId]
+    );
     
-    // Return success response with actual Twilio call SID
+    // Return success response
     res.json({ 
       success: true, 
       data: {
         id: callId,
         userId,
         callSid: call.sid,
-        fromNumber: fromPhoneNumber,  // ← Return the actual phone number
+        fromNumber: fromPhoneNumber,
         toNumber: to,
         agentId: agentId,
         direction: 'outbound',
