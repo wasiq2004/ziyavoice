@@ -2,7 +2,8 @@
 
 const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
 const { LLMService } = require("../llmService.js");
-const ulaw = require("node-ulaw");
+const nodeFetch = require("node-fetch");
+
 const sessions = new Map();
 
 class MediaStreamHandler {
@@ -14,6 +15,7 @@ class MediaStreamHandler {
         this.llmService = new LLMService(geminiApiKey);
         this.campaignService = campaignService;
     }
+
     createSession(callId, agentPrompt, agentVoiceId, ws) {
         const session = {
             callId,
@@ -22,6 +24,7 @@ class MediaStreamHandler {
             agentPrompt,
             agentVoiceId: agentVoiceId || "21m00Tcm4TlvDq8ikWAM", // Default Rachel voice
             ws,
+            streamSid: null, // Will be set from Twilio's start event
         };
         sessions.set(callId, session);
         console.log(`✅ Created session for call ${callId}`);
@@ -29,6 +32,7 @@ class MediaStreamHandler {
         console.log(`   Voice ID: ${session.agentVoiceId}`);
         return session;
     }
+
     endSession(callId) {
         const session = sessions.get(callId);
         if (session) {
@@ -40,10 +44,12 @@ class MediaStreamHandler {
             console.log(`❌ Ended session for call ${callId}`);
         }
     }
+
     appendToContext(session, text, role) {
         session.context.push({ role, parts: [{ text }] });
         console.log(`💬 ${role.toUpperCase()}: ${text}`);
     }
+
     async handleConnection(ws, req) {
         let callId = null;
         try {
@@ -58,9 +64,11 @@ class MediaStreamHandler {
                 ws.close();
                 return;
             }
+
             console.log(`📞 New call connection: ${callId}`);
             console.log(`   Agent ID: ${agentId || 'none'}`);
             console.log(`   Campaign ID: ${campaignId || 'none'}`);
+
             // Fetch agent details if agentId is provided
             let agentPrompt = "You are a helpful AI assistant. Be concise and natural in your responses.";
             let agentVoiceId = "21m00Tcm4TlvDq8ikWAM"; // Default Rachel
@@ -83,6 +91,7 @@ class MediaStreamHandler {
                     console.error("Error loading agent:", agentError);
                 }
             }
+
             // Create session
             const session = this.createSession(callId, agentPrompt, agentVoiceId, ws);
 
@@ -96,7 +105,9 @@ class MediaStreamHandler {
                 utterance_end_ms: 1000,
                 punctuate: true,
             });
+
             session.sttStream = deepgramLive;
+
             // Handle transcription results
             deepgramLive.on(LiveTranscriptionEvents.Transcript, async (data) => {
                 try {
@@ -113,7 +124,7 @@ class MediaStreamHandler {
                     // Synthesize TTS
                     const ttsAudio = await this.synthesizeTTS(llmResponse, session.agentVoiceId);
                     if (ttsAudio) {
-                        this.sendAudioToTwilio(ws, ttsAudio);
+                        this.sendAudioToTwilio(session, ttsAudio);
                     }
                 } catch (err) {
                     console.error("❌ Error in transcript handler:", err);
@@ -141,17 +152,13 @@ class MediaStreamHandler {
                         console.log("✅ Twilio Media Stream connected");
                     } else if (data.event === "start") {
                         console.log("▶️  Media Stream started:", data.start.streamSid);
+                        session.streamSid = data.start.streamSid; // Save streamSid
                     } else if (data.event === "media") {
                         // Forward audio to Deepgram
                         if (session.sttStream) {
-                            const pcm = this.decodeMulawToPcm(data.media.payload);
-                            if (pcm.length > 0) {
-                                session.sttStream.send(
-                                    pcm.buffer.slice(
-                                        pcm.byteOffset,
-                                        pcm.byteOffset + pcm.byteLength
-                                    )
-                                );
+                            const audioBuffer = Buffer.from(data.media.payload, "base64");
+                            if (audioBuffer.length > 0) {
+                                session.sttStream.send(audioBuffer);
                             }
                         }
                     } else if (data.event === "stop") {
@@ -181,16 +188,6 @@ class MediaStreamHandler {
         }
     }
 
-    decodeMulawToPcm(base64Audio) {
-        try {
-            const audioBuffer = Buffer.from(base64Audio, "base64");
-            return ulaw.decode(audioBuffer);
-        } catch (err) {
-            console.error("❌ µLaw decode error:", err);
-            return Buffer.alloc(0);
-        }
-    }
-
     async callLLM(session) {
         try {
             const response = await this.llmService.generateContent({
@@ -206,6 +203,7 @@ class MediaStreamHandler {
         }
     }
 
+    // ========== CRITICAL FIX: Use ElevenLabs REST API directly ==========
     async synthesizeTTS(text, voiceId) {
         try {
             const apiKey = process.env.ELEVEN_LABS_API_KEY || process.env.ELEVENLABS_API_KEY;
@@ -216,42 +214,66 @@ class MediaStreamHandler {
 
             console.log(`🔊 Synthesizing TTS with voice: ${voiceId}`);
 
-            const { ElevenLabsClient } = require("elevenlabs");
-            const elevenlabs = new ElevenLabsClient({ apiKey });
+            // Use REST API directly with ulaw_8000 format for Twilio
+            const response = await nodeFetch(
+                `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'audio/basic',
+                        'Content-Type': 'application/json',
+                        'xi-api-key': apiKey,
+                    },
+                    body: JSON.stringify({
+                        text: text,
+                        model_id: 'eleven_turbo_v2_5',
+                        voice_settings: {
+                            stability: 0.5,
+                            similarity_boost: 0.75,
+                            style: 0.0,
+                            use_speaker_boost: true
+                        },
+                        output_format: 'ulaw_8000' // µ-law 8kHz for Twilio
+                    })
+                }
+            );
 
-            const audio = await elevenlabs.textToSpeech.convert(voiceId, {
-                text,
-                model_id: "eleven_turbo_v2_5", // Faster model for phone calls
-                output_format: "ulaw_8000", // µ-law format at 8kHz for Twilio
-            });
-
-            const chunks = [];
-            for await (const chunk of audio) {
-                chunks.push(chunk);
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error(`❌ ElevenLabs API error: ${response.status} - ${errorText}`);
+                return null;
             }
 
-            const audioBuffer = Buffer.concat(chunks);
-            console.log(`✅ TTS generated: ${audioBuffer.length} bytes`);
+            const audioBuffer = await response.buffer();
+            console.log(`✅ TTS generated: ${audioBuffer.length} bytes (µ-law 8kHz)`);
             return audioBuffer;
         } catch (err) {
             console.error("❌ TTS error:", err);
             return null;
         }
     }
-    sendAudioToTwilio(ws, audioBuffer) {
+
+    sendAudioToTwilio(session, audioBuffer) {
         try {
+            if (!session.streamSid) {
+                console.error("❌ No streamSid available - cannot send audio");
+                return;
+            }
+
             const base64Audio = audioBuffer.toString("base64");
-            // Send audio in chunks (Twilio expects ~20ms chunks for 8kHz µ-law)
-            // 20ms at 8kHz = 160 bytes, but base64 encoding increases size
-            const chunkSize = 320; // Base64 encoded chunk size
+            
+            // Twilio expects µ-law audio in ~20ms chunks (160 bytes)
+            // Base64 encoding increases size by ~33%, so chunks should be ~213 chars
+            // But we'll use 320 to be safe and match Twilio's buffer
+            const chunkSize = 320;
             let chunksSent = 0;
 
             for (let i = 0; i < base64Audio.length; i += chunkSize) {
                 const chunk = base64Audio.slice(i, i + chunkSize);
-                ws.send(
+                session.ws.send(
                     JSON.stringify({
                         event: "media",
-                        streamSid: ws.streamSid, // Will be set from Twilio's start event
+                        streamSid: session.streamSid,
                         media: { 
                             payload: chunk 
                         },
@@ -261,17 +283,19 @@ class MediaStreamHandler {
             }
 
             // Send mark to indicate audio completion
-            ws.send(
+            session.ws.send(
                 JSON.stringify({
                     event: "mark",
-                    streamSid: ws.streamSid,
+                    streamSid: session.streamSid,
                     mark: { name: "audio_complete" },
                 })
             );
-            console.log(`✅ Sent ${chunksSent} audio chunks to Twilio`);
+
+            console.log(`✅ Sent ${chunksSent} audio chunks to Twilio (streamSid: ${session.streamSid})`);
         } catch (err) {
             console.error("❌ Error sending audio to Twilio:", err);
         }
     }
 }
+
 module.exports = { MediaStreamHandler };
