@@ -1001,9 +1001,27 @@ app.post('/api/twilio/make-call', async (req, res) => {
     // Generate a unique call ID
     const callId = require('uuid').v4();
     
-    // Get app URL for callbacks
-    const appUrl = process.env.APP_URL || `http://${process.env.SERVER_DOMAIN || 'localhost:5000'}`;
-    const cleanAppUrl = appUrl.replace(/\/$/, '');
+   // Get app URL for callbacks - MUST be a public URL for Twilio
+const appUrl = process.env.APP_URL;
+
+if (!appUrl) {
+  console.error('ERROR: APP_URL environment variable is not set!');
+  return res.status(500).json({ 
+    success: false, 
+    message: 'Server configuration error: APP_URL is not configured. Please contact administrator.' 
+  });
+}
+
+if (appUrl.includes('localhost') || appUrl.includes('127.0.0.1')) {
+  console.error('ERROR: APP_URL is set to localhost, but Twilio requires a public URL!');
+  return res.status(500).json({ 
+    success: false, 
+    message: 'Server configuration error: APP_URL must be a public URL, not localhost. Please use ngrok or deploy to Railway.' 
+  });
+}
+
+const cleanAppUrl = appUrl.replace(/\/$/, '');
+console.log('Using APP_URL for Twilio webhooks:', cleanAppUrl);
     
     // Get or create phone_numbers entry for the from number
     const database = require('./config/database.js').default;
