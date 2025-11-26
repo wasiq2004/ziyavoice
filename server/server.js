@@ -1927,7 +1927,270 @@ app.get('/api/twilio-numbers/:userId', async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 });
+// Set caller phone and agent for campaign
+app.post('/api/campaigns/:id/set-caller-phone', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId, callerPhone, agentId } = req.body;
+    
+    if (!userId || !callerPhone) {
+      return res.status(400).json({ success: false, message: 'User ID and caller phone are required' });
+    }
+    
+    // Validate that caller phone is a verified Twilio number
+    const verifiedNumbers = await twilioService.getVerifiedNumbers(userId);
+    const twilioNumber = verifiedNumbers.find(num => num.id === callerPhone || num.phoneNumber === callerPhone);
+    
+    if (!twilioNumber) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Caller phone must be a verified Twilio number' 
+      });
+    }
+    
+    // Update campaign with caller phone and agent
+    await mysqlPool.execute(
+      'UPDATE campaigns SET caller_phone = ?, agent_id = ? WHERE id = ? AND user_id = ?',
+      [twilioNumber.phoneNumber, agentId || null, id, userId]
+    );
+    
+    const updatedCampaign = await campaignService.getCampaign(id, userId);
+    res.json({ success: true, data: updatedCampaign });
+    
+  } catch (error) {
+    console.error('Error setting caller phone:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
+// Import CSV records
+app.post('/api/campaigns/:id/import', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId, csvData } = req.body;
+    
+    if (!userId || !csvData || !Array.isArray(csvData)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User ID and CSV data are required' 
+      });
+    }
+    
+    const count = await campaignService.importRecords(id, userId, csvData);
+    
+    res.json({ 
+      success: true, 
+      message: `Successfully imported ${count} records` 
+    });
+    
+  } catch (error) {
+    console.error('Error importing CSV:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Add single record
+app.post('/api/campaigns/:id/records', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId, phone } = req.body;
+    
+    if (!userId || !phone) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User ID and phone number are required' 
+      });
+    }
+    
+    const record = await campaignService.addRecord(id, userId, phone);
+    
+    res.json({ success: true, data: record });
+    
+  } catch (error) {
+    console.error('Error adding record:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Delete record
+app.delete('/api/campaigns/:campaignId/records/:recordId', async (req, res) => {
+  try {
+    const { campaignId, recordId } = req.params;
+    const { userId } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ success: false, message: 'User ID is required' });
+    }
+    
+    await campaignService.deleteRecord(recordId, campaignId, userId);
+    
+    res.json({ success: true, message: 'Record deleted successfully' });
+    
+  } catch (error) {
+    console.error('Error deleting record:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Set Google Sheets URL for campaign
+app.post('/api/campaigns/:id/set-google-sheet', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId, googleSheetUrl } = req.body;
+    
+    if (!userId || !googleSheetUrl) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User ID and Google Sheet URL are required' 
+      });
+    }
+    
+    await mysqlPool.execute(
+      'UPDATE campaigns SET google_sheet_url = ? WHERE id = ? AND user_id = ?',
+      [googleSheetUrl, id, userId]
+    );
+    
+    const updatedCampaign = await campaignService.getCampaign(id, userId);
+    res.json({ success: true, data: updatedCampaign });
+    
+  } catch (error) {
+    console.error('Error setting Google Sheet URL:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Start campaign - make calls to all pending records
+app.post('/api/campaigns/:id/start', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ success: false, message: 'User ID is required' });
+    }
+    
+    // Get campaign details
+    const campaign = await campaignService.getCampaign(id, userId);
+    
+    if (!campaign) {
+      return res.status(404).json({ success: false, message: 'Campaign not found' });
+    }
+    
+    if (!campaign.callerPhone) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Please set a caller phone number before starting the campaign' 
+      });
+    }
+    
+    if (!campaign.agentId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Please select an agent for this campaign' 
+      });
+    }
+    
+    // Update campaign status to running
+    await campaignService.startCampaign(id, userId);
+    
+    // Get all pending records
+    const [records] = await mysqlPool.execute(
+      'SELECT id, phone FROM campaign_records WHERE campaign_id = ? AND call_status = ?',
+      [id, 'pending']
+    );
+    
+    // Start making calls asynchronously
+    processCampaignCalls(id, userId, campaign, records);
+    
+    res.json({ 
+      success: true, 
+      data: await campaignService.getCampaign(id, userId),
+      message: `Campaign started. Calling ${records.length} numbers...`
+    });
+    
+  } catch (error) {
+    console.error('Error starting campaign:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Stop campaign
+app.post('/api/campaigns/:id/stop', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ success: false, message: 'User ID is required' });
+    }
+    
+    const updatedCampaign = await campaignService.stopCampaign(id, userId);
+    
+    res.json({ success: true, data: updatedCampaign });
+    
+  } catch (error) {
+    console.error('Error stopping campaign:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Process campaign calls (runs in background)
+async function processCampaignCalls(campaignId, userId, campaign, records) {
+  console.log(`Processing campaign ${campaignId} with ${records.length} records`);
+  
+  // Get verified Twilio numbers
+  const verifiedNumbers = await twilioService.getVerifiedNumbers(userId);
+  const twilioNumber = verifiedNumbers.find(num => num.phoneNumber === campaign.callerPhone);
+  
+  if (!twilioNumber) {
+    console.error('Twilio number not found:', campaign.callerPhone);
+    return;
+  }
+  
+  // Process records sequentially with delay
+  for (const record of records) {
+    try {
+      // Check if campaign is still running
+      const currentCampaign = await campaignService.getCampaign(campaignId, userId);
+      if (currentCampaign.status !== 'running') {
+        console.log('Campaign stopped, exiting...');
+        break;
+      }
+      
+      // Update record status to in-progress
+      await campaignService.updateRecordStatus(record.id, 'in-progress');
+      
+      // Make the call
+      const callId = uuidv4();
+      const appUrl = process.env.APP_URL;
+      const cleanAppUrl = appUrl.replace(/\/$/, '');
+      
+      const call = await twilioService.createCall({
+        userId: userId,
+        twilioNumberId: twilioNumber.id,
+        to: record.phone,
+        agentId: campaign.agentId,
+        callId: callId,
+        appUrl: cleanAppUrl
+      });
+      
+      // Update record with call SID
+      await campaignService.updateRecordCallSid(record.id, call.sid);
+      
+      console.log(`Call initiated for ${record.phone}: ${call.sid}`);
+      
+      // Wait 30 seconds before next call (to avoid rate limits)
+      await new Promise(resolve => setTimeout(resolve, 30000));
+      
+    } catch (error) {
+      console.error(`Error calling ${record.phone}:`, error);
+      await campaignService.updateRecordStatus(record.id, 'failed');
+      await campaignService.incrementRecordRetry(record.id);
+    }
+  }
+  
+  console.log(`Campaign ${campaignId} processing complete`);
+}
 // Start server and bind to 0.0.0.0 for Railway
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on port ${PORT}`);
