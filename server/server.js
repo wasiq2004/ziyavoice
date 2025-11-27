@@ -2174,8 +2174,9 @@ app.ws('/voice-stream', function (ws, req) {
   const identity = req.query?.identity ? decodeURIComponent(req.query.identity) : null;
   const isTwilioCall = !!(callId && agentId);
   const isFrontendChat = !!(voiceId && !callId);
-  if (deepgramResponse.ok) {
-  const deepgramResult = await deepgramResponse.json();
+  async function handleDeepgram() {
+  const deepgramResult = await deepgramResponse.json(); // ✔ Works
+}
   const transcript = deepgramResult.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
   
   // Track Deepgram usage
