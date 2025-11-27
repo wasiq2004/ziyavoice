@@ -2158,7 +2158,7 @@ app.ws('/api/call', (ws, req) => {
   mediaStreamHandler.handleConnection(ws, req);
 });
 // WebSocket endpoint for voice stream (frontend voice chat + Twilio calls)
-app.ws('/voice-stream', function (ws, req) {
+app.ws('/voice-stream', async function (ws, req) {  // ✅ ADDED async
   console.log('New voice stream connection established');
   let audioChunksReceived = 0;
   const audioBuffer = [];
@@ -2172,71 +2172,15 @@ app.ws('/voice-stream', function (ws, req) {
   const agentId = req.query?.agentId;
   const voiceId = req.query?.voiceId;
   const identity = req.query?.identity ? decodeURIComponent(req.query.identity) : null;
+  const userId = req.query?.userId; // ✅ ADDED - Get userId from query params
   const isTwilioCall = !!(callId && agentId);
   const isFrontendChat = !!(voiceId && !callId);
-  async function handleDeepgram() {
-  const deepgramResult = await deepgramResponse.json(); // ✔ Works
-}
-  const transcript = deepgramResult.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
-  
-  // Track Deepgram usage
-  const audioDurationSeconds = combinedAudioBuffer.length / (16000 * 2); // 16kHz, 16-bit
-  try {
-    await walletService.recordUsageAndCharge(
-      userId, // You need to pass userId to WebSocket
-      callId,
-      'deepgram',
-      audioDurationSeconds,
-      { transcript_length: transcript.length }
-    );
-  } catch (error) {
-    console.error('Error tracking Deepgram usage:', error);
-  }
-}
-
-// After successful Gemini response
-if (geminiResponse.ok) {
-  const geminiResult = await geminiResponse.json();
-  const agentResponse = geminiResult.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  
-  // Track Gemini usage (approximate tokens)
-  const estimatedTokens = (fullPrompt.length + agentResponse.length) / 4; // Rough estimate
-  try {
-    await walletService.recordUsageAndCharge(
-      userId,
-      callId,
-      'gemini',
-      estimatedTokens,
-      { prompt_length: fullPrompt.length, response_length: agentResponse.length }
-    );
-  } catch (error) {
-    console.error('Error tracking Gemini usage:', error);
-  }
-}
-
-// After successful ElevenLabs TTS
-if (ttsResponse.ok) {
-  const audioBuffer = await ttsResponse.arrayBuffer();
-  
-  // Track ElevenLabs usage
-  const characterCount = agentResponse.length;
-  try {
-    await walletService.recordUsageAndCharge(
-      userId,
-      callId,
-      'elevenlabs',
-      characterCount,
-      { text_length: characterCount, voice_id: agentVoiceId }
-    );
-  } catch (error) {
-    console.error('Error tracking ElevenLabs usage:', error);
-  }
-}
   
   console.log('Connection type:', isTwilioCall ? 'Twilio Call' : isFrontendChat ? 'Frontend Chat' : 'Unknown');
-  console.log('Query params:', { voiceId, agentId, callId, identity: identity ? 'present' : 'missing' });
+  console.log('Query params:', { voiceId, agentId, callId, userId, identity: identity ? 'present' : 'missing' });
   console.log('Call ID:', callId);
   console.log('Agent ID:', agentId);
+  console.log('User ID:', userId);
   
   // Map voice names to ElevenLabs voice IDs
   const voiceIdMap = {
@@ -2335,6 +2279,22 @@ if (ttsResponse.ok) {
               const transcript = deepgramResult.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
               const confidence = deepgramResult.results?.channels?.[0]?.alternatives?.[0]?.confidence || 0;
               
+              // ✅ Track Deepgram usage
+              if (userId && callId) {
+                const audioDurationSeconds = combinedAudioBuffer.length / (16000 * 2);
+                try {
+                  await walletService.recordUsageAndCharge(
+                    userId,
+                    callId,
+                    'deepgram',
+                    audioDurationSeconds,
+                    { transcript_length: transcript.length }
+                  );
+                } catch (error) {
+                  console.error('Error tracking Deepgram usage:', error);
+                }
+              }
+              
               if (transcript) {
                 console.log('Deepgram transcript:', transcript);
                 
@@ -2366,6 +2326,22 @@ if (ttsResponse.ok) {
                       const agentResponse = geminiResult.candidates?.[0]?.content?.parts?.[0]?.text || 'I could not generate a response.';
                       console.log('Gemini response:', agentResponse);
                       
+                      // ✅ Track Gemini usage
+                      if (userId && callId) {
+                        const estimatedTokens = (fullPrompt.length + agentResponse.length) / 4;
+                        try {
+                          await walletService.recordUsageAndCharge(
+                            userId,
+                            callId,
+                            'gemini',
+                            estimatedTokens,
+                            { prompt_length: fullPrompt.length, response_length: agentResponse.length }
+                          );
+                        } catch (error) {
+                          console.error('Error tracking Gemini usage:', error);
+                        }
+                      }
+                      
                       // Step 3: Send Gemini response to ElevenLabs for text-to-speech
                       if (elevenLabsApiKey) {
                         try {
@@ -2390,6 +2366,22 @@ if (ttsResponse.ok) {
                             const audioBuffer = await ttsResponse.arrayBuffer();
                             const audioBase64 = Buffer.from(audioBuffer).toString('base64');
                             
+                            // ✅ Track ElevenLabs usage
+                            if (userId && callId) {
+                              const characterCount = agentResponse.length;
+                              try {
+                                await walletService.recordUsageAndCharge(
+                                  userId,
+                                  callId,
+                                  'elevenlabs',
+                                  characterCount,
+                                  { text_length: characterCount, voice_id: agentVoiceId }
+                                );
+                              } catch (error) {
+                                console.error('Error tracking ElevenLabs usage:', error);
+                              }
+                            }
+                            
                             // Send audio back to client
                             ws.send(JSON.stringify({
                               event: 'audio',
@@ -2408,11 +2400,11 @@ if (ttsResponse.ok) {
                               event: 'agent-response',
                               text: agentResponse
                             }));
-                      
+                            
                           } else {
                             const errorText = await ttsResponse.text();
                             console.error('ElevenLabs TTS error:', ttsResponse.status, errorText);
-                           // Check if the response is HTML (error page)
+                            // Check if the response is HTML (error page)
                             if (errorText.startsWith('<!DOCTYPE') || errorText.includes('<html')) {
                               console.error('ElevenLabs API returned HTML error page. Check API key and network connectivity.');
                               ws.send(JSON.stringify({
@@ -2436,7 +2428,7 @@ if (ttsResponse.ok) {
                               }
                             }
                           }
-                           // Clear processing flag after TTS processing (whether successful or not)
+                          // Clear processing flag after TTS processing (whether successful or not)
                           isProcessing = false;
                         } catch (ttsError) {
                           console.error('Error calling ElevenLabs TTS:', ttsError);
@@ -2483,7 +2475,8 @@ if (ttsResponse.ok) {
                 
                 // Clear buffer after successful transcription
                 audioBuffer.length = 0;
-                isProcessing = false; // Clear flag after processing complete
+              } else {
+                isProcessing = false;
               }
             } else {
               const errorText = await deepgramResponse.text();
