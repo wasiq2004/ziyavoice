@@ -2174,6 +2174,63 @@ app.ws('/voice-stream', function (ws, req) {
   const identity = req.query?.identity ? decodeURIComponent(req.query.identity) : null;
   const isTwilioCall = !!(callId && agentId);
   const isFrontendChat = !!(voiceId && !callId);
+  if (deepgramResponse.ok) {
+  const deepgramResult = await deepgramResponse.json();
+  const transcript = deepgramResult.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
+  
+  // Track Deepgram usage
+  const audioDurationSeconds = combinedAudioBuffer.length / (16000 * 2); // 16kHz, 16-bit
+  try {
+    await walletService.recordUsageAndCharge(
+      userId, // You need to pass userId to WebSocket
+      callId,
+      'deepgram',
+      audioDurationSeconds,
+      { transcript_length: transcript.length }
+    );
+  } catch (error) {
+    console.error('Error tracking Deepgram usage:', error);
+  }
+}
+
+// After successful Gemini response
+if (geminiResponse.ok) {
+  const geminiResult = await geminiResponse.json();
+  const agentResponse = geminiResult.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  
+  // Track Gemini usage (approximate tokens)
+  const estimatedTokens = (fullPrompt.length + agentResponse.length) / 4; // Rough estimate
+  try {
+    await walletService.recordUsageAndCharge(
+      userId,
+      callId,
+      'gemini',
+      estimatedTokens,
+      { prompt_length: fullPrompt.length, response_length: agentResponse.length }
+    );
+  } catch (error) {
+    console.error('Error tracking Gemini usage:', error);
+  }
+}
+
+// After successful ElevenLabs TTS
+if (ttsResponse.ok) {
+  const audioBuffer = await ttsResponse.arrayBuffer();
+  
+  // Track ElevenLabs usage
+  const characterCount = agentResponse.length;
+  try {
+    await walletService.recordUsageAndCharge(
+      userId,
+      callId,
+      'elevenlabs',
+      characterCount,
+      { text_length: characterCount, voice_id: agentVoiceId }
+    );
+  } catch (error) {
+    console.error('Error tracking ElevenLabs usage:', error);
+  }
+}
   
   console.log('Connection type:', isTwilioCall ? 'Twilio Call' : isFrontendChat ? 'Frontend Chat' : 'Unknown');
   console.log('Query params:', { voiceId, agentId, callId, identity: identity ? 'present' : 'missing' });
