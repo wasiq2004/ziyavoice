@@ -45,6 +45,10 @@ const authService = new AuthService(mysqlPool);
 const twilioService = new TwilioService();
 const twilioBasicService = new TwilioBasicService();
 const adminService = new AdminService(mysqlPool);
+/ Import Google Sheets Service at the top of server.js
+const googleSheetsService = require('./services/googleSheetsService.js');
+// Initialize Google Sheets on server startup
+googleSheetsService.initialize();
 // Initialize MediaStreamHandler for voice call pipeline
 let mediaStreamHandler = null;
 
@@ -333,6 +337,7 @@ app.get('/api/user-api-keys/:userId', async (req, res) => {
   }
 });
 
+
 // Get a specific API key for a user and service
 app.get('/api/user-api-keys/:userId/:serviceName', async (req, res) => {
   try {
@@ -350,6 +355,353 @@ app.get('/api/user-api-keys/:userId/:serviceName', async (req, res) => {
   }
 });
 
+// Set Google Sheets URL for campaign
+app.post('/api/campaigns/:id/set-google-sheet', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId, googleSheetUrl } = req.body;
+    
+    if (!userId || !googleSheetUrl) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User ID and Google Sheet URL are required' 
+      });
+    }
+    
+    // Extract spreadsheet ID
+    const spreadsheetId = googleSheetsService.extractSpreadsheetId(googleSheetUrl);
+    
+    if (!spreadsheetId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid Google Sheets URL' 
+      });
+    }
+    
+    // Validate spreadsheet access
+    const validation = await googleSheetsService.validateSpreadsheet(spreadsheetId);
+    
+    if (!validation.valid) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Cannot access spreadsheet: ${validation.error}. Make sure you've shared it with the service account email.` 
+      });
+    }
+    
+    // Initialize headers in the sheet
+    await googleSheetsService.initializeHeaders(spreadsheetId, 'Call Logs');
+    
+    // Update campaign
+    await mysqlPool.execute(
+      'UPDATE campaigns SET google_sheet_url = ? WHERE id = ? AND user_id = ?',
+      [googleSheetUrl, id, userId]
+    );
+    
+    const updatedCampaign = await campaignService.getCampaign(id, userId);
+    
+    res.json({ 
+      success: true, 
+      data: updatedCampaign,
+      message: `Connected to spreadsheet: ${validation.title}` 
+    });
+    
+  } catch (error) {
+    console.error('Error setting Google Sheet URL:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Test Google Sheets connection
+app.post('/api/google-sheets/test', async (req, res) => {
+  try {
+    const { googleSheetUrl } = req.body;
+    
+    if (!googleSheetUrl) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Google Sheet URL is required' 
+      });
+    }
+    
+    const spreadsheetId = googleSheetsService.extractSpreadsheetId(googleSheetUrl);
+    
+    if (!spreadsheetId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid Google Sheets URL' 
+      });
+    }
+    
+    const validation = await googleSheetsService.validateSpreadsheet(spreadsheetId);
+    
+    if (validation.valid) {
+      res.json({ 
+        success: true, 
+        message: `Successfully connected to: ${validation.title}`,
+        spreadsheetTitle: validation.title
+      });
+    } else {
+      res.status(400).json({ 
+        success: false, 
+        message: `Cannot access spreadsheet: ${validation.error}` 
+      });
+    }
+    
+  } catch (error) {
+    console.error('Error testing Google Sheets:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Manually log a call to Google Sheets
+app.post('/api/google-sheets/log-call', async (req, res) => {
+  try {
+    const { campaignId, recordId, userId } = req.body;
+    
+    if (!campaignId || !recordId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Campaign ID and Record ID are required' 
+      });
+    }
+    
+    // Get campaign
+    const campaign = await campaignService.getCampaign(campaignId, userId);
+    if (!campaign || !campaign.google_sheet_url) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Campaign does not have Google Sheets configured' 
+      });
+    }
+    
+    // Get record details
+    const [records] = await mysqlPool.execute(
+      'SELECT * FROM campaign_records WHERE id = ? AND campaign_id = ?',
+      [recordId, campaignId]
+    );
+    
+    if (records.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Record not found' 
+      });
+    }
+    
+    const record = records[0];
+    
+    // Get agent details
+    let agentName = 'Unknown';
+    if (campaign.agent_id) {
+      const agent = await agentService.getAgentById(userId, campaign.agent_id);
+      if (agent) agentName = agent.name;
+    }
+    
+    // Log to Google Sheets
+    const spreadsheetId = googleSheetsService.extractSpreadsheetId(campaign.google_sheet_url);
+    const result = await googleSheetsService.logCallData(spreadsheetId, {
+      phone: record.phone,
+      callStatus: record.call_status,
+      duration: record.duration || 0,
+      callSid: record.call_sid,
+      recordingUrl: record.recording_url,
+      agentName: agentName,
+      campaignName: campaign.name,
+      retries: record.retries || 0,
+      metadata: record.metadata ? JSON.parse(record.metadata) : {}
+    });
+    
+    res.json(result);
+    
+  } catch (error) {
+    console.error('Error logging call to Google Sheets:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ==================== END GOOGLE SHEETS ENDPOINTS ====================
+
+
+app.post('/api/twilio/status', async (req, res) => {
+  try {
+    const { callId } = req.query;
+    const { CallSid, CallStatus, CallDuration, RecordingUrl } = req.body;
+    
+    console.log('Twilio status callback:', {
+      callId,
+      callSid: CallSid,
+      status: CallStatus,
+      duration: CallDuration
+    });
+    
+    if (callId && CallSid) {
+      const database = require('./config/database.js').default;
+      
+      // Update call in database
+      const updateData = {
+        status: CallStatus,
+        call_sid: CallSid
+      };
+      
+      if (CallDuration) {
+        updateData.duration = parseInt(CallDuration);
+      }
+      
+      if (RecordingUrl) {
+        updateData.recording_url = RecordingUrl;
+      }
+      
+      if (CallStatus === 'completed' || CallStatus === 'failed' || CallStatus === 'busy' || CallStatus === 'no-answer') {
+        updateData.ended_at = new Date();
+      }
+      
+      const fields = Object.keys(updateData).map(key => `${key} = ?`).join(', ');
+      const values = Object.values(updateData);
+      values.push(callId);
+      
+      await database.execute(
+        `UPDATE calls SET ${fields} WHERE id = ?`,
+        values
+      );
+      
+      // Also update campaign record and Google Sheets
+      const [callRecords] = await database.execute(
+        'SELECT c.*, cr.campaign_id, camp.google_sheet_url FROM calls c LEFT JOIN campaign_records cr ON c.call_sid = cr.call_sid LEFT JOIN campaigns camp ON cr.campaign_id = camp.id WHERE c.id = ?',
+        [callId]
+      );
+      
+      if (callRecords.length > 0 && callRecords[0].campaign_id) {
+        const callRecord = callRecords[0];
+        
+        // Update campaign record
+        await database.execute(
+          'UPDATE campaign_records SET call_status = ?, duration = ?, recording_url = ? WHERE call_sid = ?',
+          [CallStatus, CallDuration || 0, RecordingUrl || null, CallSid]
+        );
+        
+        // Update Google Sheets if configured
+        if (callRecord.google_sheet_url) {
+          const spreadsheetId = googleSheetsService.extractSpreadsheetId(callRecord.google_sheet_url);
+          if (spreadsheetId) {
+            await googleSheetsService.updateCallData(spreadsheetId, CallSid, {
+              callStatus: CallStatus,
+              duration: CallDuration ? parseInt(CallDuration) : 0,
+              recordingUrl: RecordingUrl || '',
+              notes: `Call ${CallStatus}`
+            });
+          }
+        }
+      }
+      
+      console.log('Call status updated in database and Google Sheets:', callId, CallStatus);
+    }
+    
+    res.status(200).send('OK');
+    
+  } catch (error) {
+    console.error('Error processing Twilio status callback:', error);
+    res.status(200).send('OK');
+  }
+});
+
+// Update the processCampaignCalls function to include Google Sheets logging
+async function processCampaignCalls(campaignId, userId, campaign, records) {
+  console.log(`Processing campaign ${campaignId} with ${records.length} records`);
+  
+  const verifiedNumbers = await twilioService.getVerifiedNumbers(userId);
+  const twilioNumber = verifiedNumbers.find(num => num.phoneNumber === campaign.callerPhone);
+  
+  if (!twilioNumber) {
+    console.error('Twilio number not found:', campaign.callerPhone);
+    return;
+  }
+  
+  // Get agent details for logging
+  let agentName = 'Unknown';
+  if (campaign.agentId) {
+    try {
+      const agent = await agentService.getAgentById(userId, campaign.agentId);
+      if (agent) agentName = agent.name;
+    } catch (error) {
+      console.error('Error fetching agent:', error);
+    }
+  }
+  
+  // Get spreadsheet ID if configured
+  let spreadsheetId = null;
+  if (campaign.google_sheet_url) {
+    spreadsheetId = googleSheetsService.extractSpreadsheetId(campaign.google_sheet_url);
+  }
+  
+  for (const record of records) {
+    try {
+      const currentCampaign = await campaignService.getCampaign(campaignId, userId);
+      if (currentCampaign.status !== 'running') {
+        console.log('Campaign stopped, exiting...');
+        break;
+      }
+      
+      await campaignService.updateRecordStatus(record.id, 'in-progress');
+      
+      const callId = uuidv4();
+      const appUrl = process.env.APP_URL;
+      const cleanAppUrl = appUrl.replace(/\/$/, '');
+      
+      const call = await twilioService.createCall({
+        userId: userId,
+        twilioNumberId: twilioNumber.id,
+        to: record.phone,
+        agentId: campaign.agentId,
+        callId: callId,
+        appUrl: cleanAppUrl
+      });
+      
+      await campaignService.updateRecordCallSid(record.id, call.sid);
+      
+      // Log to Google Sheets immediately after call is initiated
+      if (spreadsheetId) {
+        await googleSheetsService.logCallData(spreadsheetId, {
+          phone: record.phone,
+          callStatus: 'initiated',
+          duration: 0,
+          callSid: call.sid,
+          recordingUrl: '',
+          agentName: agentName,
+          campaignName: campaign.name,
+          retries: record.retries || 0,
+          notes: 'Call initiated',
+          metadata: {}
+        });
+      }
+      
+      console.log(`Call initiated for ${record.phone}: ${call.sid}`);
+      
+      await new Promise(resolve => setTimeout(resolve, 30000));
+      
+    } catch (error) {
+      console.error(`Error calling ${record.phone}:`, error);
+      await campaignService.updateRecordStatus(record.id, 'failed');
+      await campaignService.incrementRecordRetry(record.id);
+      
+      // Log failure to Google Sheets
+      if (spreadsheetId) {
+        await googleSheetsService.logCallData(spreadsheetId, {
+          phone: record.phone,
+          callStatus: 'failed',
+          duration: 0,
+          callSid: '',
+          recordingUrl: '',
+          agentName: agentName,
+          campaignName: campaign.name,
+          retries: (record.retries || 0) + 1,
+          notes: error.message,
+          metadata: {}
+        });
+      }
+    }
+  }
+  
+  console.log(`Campaign ${campaignId} processing complete`);
+}
 // Save or update an API key for a user
 app.post('/api/user-api-keys', async (req, res) => {
   try {
