@@ -588,7 +588,44 @@ var CampaignService = /** @class */ (function () {
             });
         });
     };
-
+/**
+ * Delete a record from a campaign
+ * @param recordId Record ID
+ * @param campaignId Campaign ID
+ * @param userId User ID for security check
+ * @returns True if deleted, false if not found
+ */
+CampaignService.prototype.deleteRecord = function (recordId, campaignId, userId) {
+    return __awaiter(this, void 0, void 0, function () {
+        var campaign, result, error_18;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0:
+                    _a.trys.push([0, 3, , 4]);
+                    // Verify campaign belongs to user
+                    return [4 /*yield*/, this.getCampaign(campaignId, userId)];
+                case 1:
+                    campaign = _a.sent();
+                    if (!campaign) {
+                        throw new Error('Campaign not found');
+                    }
+                    // Delete the record
+                    return [4 /*yield*/, this.mysqlPool.execute(
+                        'DELETE FROM campaign_records WHERE id = ? AND campaign_id = ?',
+                        [recordId, campaignId]
+                    )];
+                case 2:
+                    result = (_a.sent())[0];
+                    return [2 /*return*/, result.affectedRows > 0];
+                case 3:
+                    error_18 = _a.sent();
+                    console.error('Error deleting record:', error_18);
+                    throw error_18;
+                case 4: return [2 /*return*/];
+            }
+        });
+    });
+};
     return CampaignService;
 }());
 exports.CampaignService = CampaignService;
