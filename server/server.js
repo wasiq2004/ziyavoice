@@ -26,6 +26,8 @@ const { TwilioBasicService } = require('./services/twilioBasicService.js');
 const { MediaStreamHandler } = require('./services/mediaStreamHandler.js');
 const { ElevenLabsStreamHandler } = require('./services/elevenLabsStreamHandler.js');
 const AdminService = require('./services/adminService.js');
+const WalletService = require('./services/walletService.js');
+const walletService = new WalletService(mysqlPool);
 
 // Init server
 const app = express();
@@ -96,6 +98,247 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 
+// Get user wallet balance
+app.get('/api/wallet/balance/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    const balance = await walletService.getBalance(userId);
+    
+    res.json({ 
+      success: true, 
+      balance: balance,
+      currency: 'USD'
+    });
+  } catch (error) {
+    console.error('Error fetching wallet balance:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get wallet transactions
+app.get('/api/wallet/transactions/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
+    
+    const transactions = await walletService.getTransactions(userId, limit, offset);
+    
+    res.json({ 
+      success: true, 
+      transactions: transactions
+    });
+  } catch (error) {
+    console.error('Error fetching transactions:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get usage statistics
+app.get('/api/wallet/usage-stats/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { startDate, endDate } = req.query;
+    
+    const stats = await walletService.getUsageStats(userId, startDate, endDate);
+    
+    res.json({ 
+      success: true, 
+      stats: stats
+    });
+  } catch (error) {
+    console.error('Error fetching usage stats:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get service pricing
+app.get('/api/wallet/pricing', async (req, res) => {
+  try {
+    const pricing = await walletService.getServicePricing();
+    
+    res.json({ 
+      success: true, 
+      pricing: pricing
+    });
+  } catch (error) {
+    console.error('Error fetching pricing:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ==================== ADMIN WALLET ENDPOINTS ====================
+
+// Add credits to user wallet (admin only)
+app.post('/api/admin/wallet/add-credits', async (req, res) => {
+  try {
+    const { userId, amount, description, adminId } = req.body;
+    
+    if (!userId || !amount || !adminId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User ID, amount, and admin ID are required' 
+      });
+    }
+    
+    if (amount <= 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Amount must be greater than 0' 
+      });
+    }
+    
+    const result = await walletService.addCredits(
+      userId, 
+      amount, 
+      description || 'Admin credit adjustment', 
+      adminId
+    );
+    
+    // Log admin activity
+    await adminService.logActivity(
+      adminId,
+      'add_wallet_credits',
+      userId,
+      `Added $${amount} to wallet. Reason: ${description || 'N/A'}`,
+      req.ip
+    );
+    
+    res.json({ 
+      success: true, 
+      newBalance: result.newBalance,
+      transaction: result.transaction
+    });
+  } catch (error) {
+    console.error('Error adding credits:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Deduct credits from user wallet (admin only)
+app.post('/api/admin/wallet/deduct-credits', async (req, res) => {
+  try {
+    const { userId, amount, description, adminId } = req.body;
+    
+    if (!userId || !amount || !adminId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User ID, amount, and admin ID are required' 
+      });
+    }
+    
+    if (amount <= 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Amount must be greater than 0' 
+      });
+    }
+    
+    const result = await walletService.deductCredits(
+      userId, 
+      amount, 
+      'admin_adjustment',
+      description || 'Admin debit adjustment',
+      null,
+      { adjusted_by: adminId }
+    );
+    
+    // Log admin activity
+    await adminService.logActivity(
+      adminId,
+      'deduct_wallet_credits',
+      userId,
+      `Deducted $${amount} from wallet. Reason: ${description || 'N/A'}`,
+      req.ip
+    );
+    
+    res.json({ 
+      success: true, 
+      newBalance: result.newBalance,
+      transaction: result.transaction
+    });
+  } catch (error) {
+    console.error('Error deducting credits:', error);
+    
+    if (error.message === 'Insufficient balance') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User has insufficient balance' 
+      });
+    }
+    
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Update service pricing (admin only)
+app.post('/api/admin/wallet/update-pricing', async (req, res) => {
+  try {
+    const { serviceType, costPerUnit, adminId } = req.body;
+    
+    if (!serviceType || !costPerUnit || !adminId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Service type, cost per unit, and admin ID are required' 
+      });
+    }
+    
+    if (!['elevenlabs', 'deepgram', 'gemini'].includes(serviceType)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid service type' 
+      });
+    }
+    
+    await walletService.updatePricing(serviceType, costPerUnit, adminId);
+    
+    // Log admin activity
+    await adminService.logActivity(
+      adminId,
+      'update_service_pricing',
+      null,
+      `Updated ${serviceType} pricing to $${costPerUnit} per unit`,
+      req.ip
+    );
+    
+    res.json({ success: true, message: 'Pricing updated successfully' });
+  } catch (error) {
+    console.error('Error updating pricing:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get all users wallet balances (admin only)
+app.get('/api/admin/wallet/all-balances', async (req, res) => {
+  try {
+    const [wallets] = await mysqlPool.execute(`
+      SELECT 
+        uw.user_id, 
+        u.username, 
+        u.email, 
+        uw.balance, 
+        uw.updated_at
+      FROM user_wallets uw
+      JOIN users u ON uw.user_id = u.id
+      ORDER BY uw.balance DESC
+    `);
+    
+    res.json({ 
+      success: true, 
+      wallets: wallets.map(w => ({
+        userId: w.user_id,
+        username: w.username,
+        email: w.email,
+        balance: parseFloat(w.balance),
+        lastUpdated: w.updated_at
+      }))
+    });
+  } catch (error) {
+    console.error('Error fetching all wallet balances:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 // ------------------------------------------------
  // For Twilio webhook form data
 
