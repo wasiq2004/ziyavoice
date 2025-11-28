@@ -270,9 +270,9 @@ async getTransactions(userId, limit = 50, offset = 0) {
     throw error;
   }
 }
-  //**
- * Get usage statistics
- */
+  
+ //Get usage statistics
+ 
 async getUsageStats(userId, startDate = null, endDate = null) {
   try {
     let query = `
