@@ -2028,19 +2028,6 @@ app.post('/api/twilio/voice', async (req, res) => {
   }
 });
 
-    
-    if (callId) {
-      await mysqlPool.execute(
-        'UPDATE calls SET status = ? WHERE id = ?',
-        ['in-progress', callId]
-      );
-    }
-  } catch (error) {
-    console.error('❌ Voice webhook error:', error);
-    res.status(500).send('Error');
-  }
-});
-
 // Twilio Status Callback
 app.post('/api/twilio/callback', async (req, res) => {
   try {
