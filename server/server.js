@@ -3108,7 +3108,7 @@ app.get("/db-conn-status", async (req, res) => {
 });
 
 // Start server and bind to 0.0.0.0 for Railway
-app.listen(PORT, '0.0.0.0', async () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on port ${PORT}`);
   console.log(`Frontend URL: ${FRONTEND_URL}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
