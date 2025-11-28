@@ -1957,6 +1957,8 @@ app.delete('/api/twilio/accounts/:accountId', async (req, res) => {
 
 /// Replace your /api/twilio/voice endpoint in server.js (around line 1150)
 
+// Replace your /api/twilio/voice endpoint in server.js (around line 1150)
+
 app.post('/api/twilio/voice', async (req, res) => {
   try {
     const { CallSid, From, To } = req.body;
@@ -1979,6 +1981,54 @@ app.post('/api/twilio/voice', async (req, res) => {
       res.type('text/xml');
       return res.send(errorTwiml);
     }
+
+    // Build WebSocket URL
+    const appUrl = process.env.APP_URL;
+    const wsUrl = appUrl.replace('https://', 'wss://').replace('http://', 'ws://');
+    
+    // Use callId if provided, otherwise use CallSid
+    const actualCallId = callId || CallSid;
+    
+    // Build stream URL with all necessary parameters
+    const streamUrl = `${wsUrl}/api/call?callId=${actualCallId}&agentId=${agentId}&contactId=${CallSid}`;
+
+    console.log('🔗 WebSocket Stream URL:', streamUrl);
+
+    // Generate TwiML
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Connect>
+        <Stream url="${streamUrl}" />
+    </Connect>
+</Response>`;
+
+    console.log('📄 Sending TwiML to Twilio');
+    console.log('=============================================');
+
+    res.type('text/xml');
+    res.send(twiml);
+
+    // Update call status in database (async, don't block response)
+    if (callId) {
+      mysqlPool.execute(
+        'UPDATE calls SET status = ? WHERE id = ?',
+        ['in-progress', callId]
+      ).catch(err => console.error('Error updating call status:', err));
+    }
+  } catch (error) {
+    console.error('❌ Voice webhook error:', error);
+    
+    // Return error TwiML instead of crashing
+    const errorTwiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say>We're experiencing technical difficulties. Please try again later.</Say>
+    <Hangup/>
+</Response>`;
+    
+    res.type('text/xml');
+    res.send(errorTwiml);
+  }
+});
 
     // Build WebSocket URL
     const appUrl = process.env.APP_URL;
