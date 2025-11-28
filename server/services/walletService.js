@@ -234,33 +234,41 @@ class WalletService {
   }
 
   /**
-   * Get transaction history
-   */
-  async getTransactions(userId, limit = 50, offset = 0) {
-    try {
-      const [transactions] = await this.mysqlPool.execute(
-        `SELECT * FROM wallet_transactions 
-        WHERE user_id = ? 
-        ORDER BY created_at DESC 
-        LIMIT ? OFFSET ?`,
-        [userId, limit, offset]
-      );
-
-      return transactions.map(t => ({
-        id: t.id,
-        type: t.transaction_type,
-        amount: parseFloat(t.amount),
-        balanceAfter: parseFloat(t.balance_after),
-        service: t.service_type,
-        description: t.description,
-        createdAt: t.created_at
-      }));
-    } catch (error) {
-      console.error('Error getting transactions:', error);
-      throw error;
+ * Get transaction history
+ */
+async getTransactions(userId, limit = 50, offset = 0) {
+  try {
+    // ✅ FIX: Ensure limit and offset are integers
+    const limitInt = parseInt(limit) || 50;
+    const offsetInt = parseInt(offset) || 0;
+    
+    // Validate userId
+    if (!userId) {
+      throw new Error('User ID is required');
     }
-  }
+    
+    const [transactions] = await this.mysqlPool.execute(
+      `SELECT * FROM wallet_transactions 
+      WHERE user_id = ? 
+      ORDER BY created_at DESC 
+      LIMIT ? OFFSET ?`,
+      [userId, limitInt, offsetInt]  // ✅ Use parsed integers
+    );
 
+    return transactions.map(t => ({
+      id: t.id,
+      type: t.transaction_type,
+      amount: parseFloat(t.amount),
+      balanceAfter: parseFloat(t.balance_after),
+      service: t.service_type,
+      description: t.description,
+      createdAt: t.created_at
+    }));
+  } catch (error) {
+    console.error('Error getting transactions:', error);
+    throw error;
+  }
+}
   /**
    * Get usage statistics
    */
