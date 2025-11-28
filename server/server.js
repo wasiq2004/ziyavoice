@@ -1955,20 +1955,44 @@ app.delete('/api/twilio/accounts/:accountId', async (req, res) => {
   }
 });
 
-// Twilio Voice Webhook - Returns TwiML to start Media Stream
+/// Replace your /api/twilio/voice endpoint in server.js (around line 1150)
+
 app.post('/api/twilio/voice', async (req, res) => {
   try {
     const { CallSid, From, To } = req.body;
     const { userId, campaignId, agentId, callId } = req.query;
 
-    console.log('📞 Twilio voice webhook:', { CallSid, From, To, agentId });
+    console.log('📞 ========== TWILIO VOICE WEBHOOK ==========');
+    console.log('   CallSid:', CallSid);
+    console.log('   From:', From);
+    console.log('   To:', To);
+    console.log('   Query params:', { userId, campaignId, agentId, callId });
 
+    // Validate required parameters
+    if (!agentId) {
+      console.error('❌ Missing agentId in voice webhook');
+      const errorTwiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say>Sorry, there was a configuration error. Please contact support.</Say>
+    <Hangup/>
+</Response>`;
+      res.type('text/xml');
+      return res.send(errorTwiml);
+    }
+
+    // Build WebSocket URL
     const appUrl = process.env.APP_URL;
     const wsUrl = appUrl.replace('https://', 'wss://').replace('http://', 'ws://');
-    const streamUrl = `${wsUrl}/api/call?callId=${callId || CallSid}&agentId=${agentId || ''}&contactId=${CallSid}`;
+    
+    // Use callId if provided, otherwise use CallSid
+    const actualCallId = callId || CallSid;
+    
+    // Build stream URL with all necessary parameters
+    const streamUrl = `${wsUrl}/api/call?callId=${actualCallId}&agentId=${agentId}&contactId=${CallSid}`;
 
-    console.log('🔗 Stream URL:', streamUrl);
+    console.log('🔗 WebSocket Stream URL:', streamUrl);
 
+    // Generate TwiML
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Connect>
@@ -1976,9 +2000,33 @@ app.post('/api/twilio/voice', async (req, res) => {
     </Connect>
 </Response>`;
 
+    console.log('📄 Sending TwiML to Twilio');
+    console.log('=============================================');
+
     res.type('text/xml');
     res.send(twiml);
 
+    // Update call status in database
+    if (callId) {
+      await mysqlPool.execute(
+        'UPDATE calls SET status = ? WHERE id = ?',
+        ['in-progress', callId]
+      );
+    }
+  } catch (error) {
+    console.error('❌ Voice webhook error:', error);
+    
+    // Return error TwiML instead of crashing
+    const errorTwiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say>We're experiencing technical difficulties. Please try again later.</Say>
+    <Hangup/>
+</Response>`;
+    
+    res.type('text/xml');
+    res.send(errorTwiml);
+  }
+});
     if (callId) {
       await mysqlPool.execute(
         'UPDATE calls SET status = ? WHERE id = ?',
