@@ -3093,12 +3093,6 @@ async function processCampaignCalls(campaignId, userId, campaign, records) {
   
   console.log(`Campaign ${campaignId} processing complete`);
 }
-// Start server and bind to 0.0.0.0 for Railway
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server listening on port ${PORT}`);
-  console.log(`Frontend URL: ${FRONTEND_URL}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-});
 
 app.get("/db-conn-status", async (req, res) => {
   try {
@@ -3111,4 +3105,11 @@ app.get("/db-conn-status", async (req, res) => {
     console.error("MYSQL CONNECTION ERROR:", error);
     res.json({ success: false, error: error.message || "No message" });
   }
+});
+
+// Start server and bind to 0.0.0.0 for Railway
+app.listen(PORT, '0.0.0.0', async () => {
+  console.log(`Server listening on port ${PORT}`);
+  console.log(`Frontend URL: ${FRONTEND_URL}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });
