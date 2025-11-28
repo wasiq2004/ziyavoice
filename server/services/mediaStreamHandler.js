@@ -22,9 +22,11 @@ class MediaStreamHandler {
             context: [],
             sttStream: null,
             agentPrompt,
-            agentVoiceId: agentVoiceId || "21m00Tcm4TlvDq8ikWAM", // Default Rachel voice
+            agentVoiceId: agentVoiceId || "21m00Tcm4TlvDq8ikWAM",
             ws,
-            streamSid: null, // Will be set from Twilio's start event
+            streamSid: null,
+            isReady: false, // ✅ NEW: Track if ready to send audio
+            audioQueue: [], // ✅ NEW: Queue audio until streamSid is available
         };
         sessions.set(callId, session);
         console.log(`✅ Created session for call ${callId}`);
@@ -53,10 +55,8 @@ class MediaStreamHandler {
     async handleConnection(ws, req) {
         let callId = null;
         try {
-            // Extract parameters from query string
             const { campaignId, contactId, agentId, callId: queryCallId } = req.query;
             
-            // Use callId or contactId (contactId is CallSid from Twilio)
             callId = queryCallId || contactId;
 
             if (!callId) {
@@ -69,13 +69,12 @@ class MediaStreamHandler {
             console.log(`   Agent ID: ${agentId || 'none'}`);
             console.log(`   Campaign ID: ${campaignId || 'none'}`);
 
-            // Fetch agent details if agentId is provided
             let agentPrompt = "You are a helpful AI assistant. Be concise and natural in your responses.";
-            let agentVoiceId = "21m00Tcm4TlvDq8ikWAM"; // Default Rachel
+            let agentVoiceId = "21m00Tcm4TlvDq8ikWAM";
+            let greetingMessage = "Hello! How can I help you today?"; // ✅ NEW
 
             if (agentId) {
                 try {
-                    // Import AgentService
                     const AgentService = require('./agentService.js');
                     const agentService = new AgentService(require('../config/database.js').default);
                     
@@ -83,6 +82,10 @@ class MediaStreamHandler {
                     if (agent) {
                         agentPrompt = agent.identity || agent.prompt || agentPrompt;
                         agentVoiceId = agent.voiceId || agentVoiceId;
+                        // ✅ NEW: Get greeting from agent settings
+                        if (agent.settings && agent.settings.greetingLine) {
+                            greetingMessage = agent.settings.greetingLine;
+                        }
                         console.log(`✅ Loaded agent: ${agent.name}`);
                     } else {
                         console.warn(`⚠️  Agent ${agentId} not found, using defaults`);
@@ -92,8 +95,10 @@ class MediaStreamHandler {
                 }
             }
 
-            // Create session
             const session = this.createSession(callId, agentPrompt, agentVoiceId, ws);
+
+            // ✅ NEW: Store greeting message
+            session.greetingMessage = greetingMessage;
 
             // Initialize Deepgram STT stream
             const deepgramLive = this.deepgramClient.listen.live({
@@ -108,7 +113,6 @@ class MediaStreamHandler {
 
             session.sttStream = deepgramLive;
 
-            // Handle transcription results
             deepgramLive.on(LiveTranscriptionEvents.Transcript, async (data) => {
                 try {
                     const transcript = data.channel?.alternatives?.[0]?.transcript;
@@ -117,11 +121,9 @@ class MediaStreamHandler {
                     console.log(`🎤 Transcribed: "${transcript}"`);
                     this.appendToContext(session, transcript, "user");
 
-                    // Get LLM response
                     const llmResponse = await this.callLLM(session);
                     this.appendToContext(session, llmResponse, "model");
 
-                    // Synthesize TTS
                     const ttsAudio = await this.synthesizeTTS(llmResponse, session.agentVoiceId);
                     if (ttsAudio) {
                         this.sendAudioToTwilio(session, ttsAudio);
@@ -143,7 +145,6 @@ class MediaStreamHandler {
                 console.log("✅ Deepgram connection opened");
             });
 
-            // Handle incoming messages from Twilio
             ws.on("message", async (message) => {
                 try {
                     const data = JSON.parse(message.toString());
@@ -152,9 +153,30 @@ class MediaStreamHandler {
                         console.log("✅ Twilio Media Stream connected");
                     } else if (data.event === "start") {
                         console.log("▶️  Media Stream started:", data.start.streamSid);
-                        session.streamSid = data.start.streamSid; // Save streamSid
+                        session.streamSid = data.start.streamSid;
+                        session.isReady = true; // ✅ NEW
+
+                        // ✅ NEW: Send queued audio
+                        if (session.audioQueue.length > 0) {
+                            console.log(`📤 Sending ${session.audioQueue.length} queued audio chunks`);
+                            for (const audioBuffer of session.audioQueue) {
+                                this.sendAudioToTwilio(session, audioBuffer);
+                            }
+                            session.audioQueue = [];
+                        }
+
+                        // ✅ NEW: Send greeting after connection is established
+                        setTimeout(async () => {
+                            const greetingAudio = await this.synthesizeTTS(
+                                session.greetingMessage, 
+                                session.agentVoiceId
+                            );
+                            if (greetingAudio) {
+                                this.sendAudioToTwilio(session, greetingAudio);
+                            }
+                        }, 500); // Small delay to ensure connection is stable
+
                     } else if (data.event === "media") {
-                        // Forward audio to Deepgram
                         if (session.sttStream) {
                             const audioBuffer = Buffer.from(data.media.payload, "base64");
                             if (audioBuffer.length > 0) {
@@ -203,7 +225,6 @@ class MediaStreamHandler {
         }
     }
 
-    // ========== CRITICAL FIX: Use ElevenLabs REST API directly ==========
     async synthesizeTTS(text, voiceId) {
         try {
             const apiKey = process.env.ELEVEN_LABS_API_KEY || process.env.ELEVENLABS_API_KEY;
@@ -214,7 +235,6 @@ class MediaStreamHandler {
 
             console.log(`🔊 Synthesizing TTS with voice: ${voiceId}`);
 
-            // Use REST API directly with ulaw_8000 format for Twilio
             const response = await nodeFetch(
                 `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
                 {
@@ -233,7 +253,7 @@ class MediaStreamHandler {
                             style: 0.0,
                             use_speaker_boost: true
                         },
-                        output_format: 'ulaw_8000' // µ-law 8kHz for Twilio
+                        output_format: 'ulaw_8000'
                     })
                 }
             );
@@ -255,17 +275,19 @@ class MediaStreamHandler {
 
     sendAudioToTwilio(session, audioBuffer) {
         try {
-            if (!session.streamSid) {
-                console.error("❌ No streamSid available - cannot send audio");
+            // ✅ FIXED: Queue audio if not ready yet
+            if (!session.isReady || !session.streamSid) {
+                console.log("⏸️  Queueing audio - stream not ready yet");
+                session.audioQueue.push(audioBuffer);
                 return;
             }
 
             const base64Audio = audioBuffer.toString("base64");
             
-            // Twilio expects µ-law audio in ~20ms chunks (160 bytes)
-            // Base64 encoding increases size by ~33%, so chunks should be ~213 chars
-            // But we'll use 320 to be safe and match Twilio's buffer
-            const chunkSize = 320;
+            // ✅ FIXED: Correct chunking for µ-law 8kHz
+            // 160 bytes of µ-law = 20ms of audio
+            // Base64 encoding: 160 bytes → 214 chars
+            const chunkSize = 214; // Adjusted to match 160 bytes µ-law
             let chunksSent = 0;
 
             for (let i = 0; i < base64Audio.length; i += chunkSize) {
