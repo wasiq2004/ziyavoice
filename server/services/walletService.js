@@ -233,26 +233,27 @@ class WalletService {
     }
   }
 
-  /**
+ /**
  * Get transaction history
  */
 async getTransactions(userId, limit = 50, offset = 0) {
   try {
-    // ✅ FIX: Ensure limit and offset are integers
-    const limitInt = parseInt(limit) || 50;
-    const offsetInt = parseInt(offset) || 0;
+    // Ensure limit and offset are safe integers
+    const limitInt = Math.max(1, Math.min(parseInt(limit) || 50, 1000)); // Cap at 1000
+    const offsetInt = Math.max(0, parseInt(offset) || 0);
     
     // Validate userId
     if (!userId) {
       throw new Error('User ID is required');
     }
     
+    // Use string interpolation for LIMIT/OFFSET to avoid MySQL2 bug
     const [transactions] = await this.mysqlPool.execute(
       `SELECT * FROM wallet_transactions 
       WHERE user_id = ? 
       ORDER BY created_at DESC 
-      LIMIT ? OFFSET ?`,
-      [userId, limitInt, offsetInt]  // ✅ Use parsed integers
+      LIMIT ${limitInt} OFFSET ${offsetInt}`,
+      [userId]  // Only userId as parameter
     );
 
     return transactions.map(t => ({
@@ -269,48 +270,48 @@ async getTransactions(userId, limit = 50, offset = 0) {
     throw error;
   }
 }
-  /**
-   * Get usage statistics
-   */
-  async getUsageStats(userId, startDate = null, endDate = null) {
-    try {
-      let query = `
-        SELECT 
-          service_type,
-          SUM(units_used) as total_units,
-          SUM(total_cost) as total_cost,
-          COUNT(*) as usage_count
-        FROM service_usage
-        WHERE user_id = ?
-      `;
-      
-      const params = [userId];
+  //**
+ * Get usage statistics
+ */
+async getUsageStats(userId, startDate = null, endDate = null) {
+  try {
+    let query = `
+      SELECT 
+        service_type,
+        SUM(units_used) as total_units,
+        SUM(total_cost) as total_cost,
+        COUNT(*) as usage_count
+      FROM service_usage
+      WHERE user_id = ?
+    `;
+    
+    const params = [userId];
 
-      if (startDate) {
-        query += ' AND created_at >= ?';
-        params.push(startDate);
-      }
-
-      if (endDate) {
-        query += ' AND created_at <= ?';
-        params.push(endDate);
-      }
-
-      query += ' GROUP BY service_type';
-
-      const [stats] = await this.mysqlPool.execute(query, params);
-
-      return stats.map(s => ({
-        service: s.service_type,
-        totalUnits: parseFloat(s.total_units),
-        totalCost: parseFloat(s.total_cost),
-        usageCount: s.usage_count
-      }));
-    } catch (error) {
-      console.error('Error getting usage stats:', error);
-      throw error;
+    if (startDate) {
+      query += ' AND created_at >= ?';
+      params.push(startDate);
     }
+
+    if (endDate) {
+      query += ' AND created_at <= ?';
+      params.push(endDate);
+    }
+
+    query += ' GROUP BY service_type';
+
+    const [stats] = await this.mysqlPool.execute(query, params);
+
+    return stats.map(s => ({
+      service: s.service_type,
+      totalUnits: parseFloat(s.total_units || 0),
+      totalCost: parseFloat(s.total_cost || 0),
+      usageCount: parseInt(s.usage_count || 0)
+    }));
+  } catch (error) {
+    console.error('Error getting usage stats:', error);
+    throw error;
   }
+}
 
   /**
    * Helper: Get unit type for service
