@@ -351,7 +351,165 @@ app.get('/healthz', (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
+// Add this to server.js right after the health check endpoint
 
+app.get('/api/voice-config-check', (req, res) => {
+  const config = {
+    timestamp: new Date().toISOString(),
+    checks: {
+      deepgram: {
+        configured: !!process.env.DEEPGRAM_API_KEY,
+        keyPreview: process.env.DEEPGRAM_API_KEY 
+          ? process.env.DEEPGRAM_API_KEY.substring(0, 8) + '...' 
+          : 'NOT SET'
+      },
+      gemini: {
+        configured: !!process.env.GOOGLE_GEMINI_API_KEY,
+        keyPreview: process.env.GOOGLE_GEMINI_API_KEY 
+          ? process.env.GOOGLE_GEMINI_API_KEY.substring(0, 8) + '...' 
+          : 'NOT SET'
+      },
+      elevenlabs: {
+        configured: !!(process.env.ELEVEN_LABS_API_KEY || process.env.ELEVENLABS_API_KEY),
+        keyPreview: (process.env.ELEVEN_LABS_API_KEY || process.env.ELEVENLABS_API_KEY)
+          ? (process.env.ELEVEN_LABS_API_KEY || process.env.ELEVENLABS_API_KEY).substring(0, 8) + '...' 
+          : 'NOT SET'
+      },
+      appUrl: {
+        configured: !!process.env.APP_URL,
+        value: process.env.APP_URL || 'NOT SET',
+        isPublic: process.env.APP_URL && 
+                  !process.env.APP_URL.includes('localhost') && 
+                  !process.env.APP_URL.includes('127.0.0.1')
+      },
+      mediaStreamHandler: {
+        initialized: !!mediaStreamHandler,
+        status: mediaStreamHandler ? 'READY' : 'NOT INITIALIZED (missing API keys)'
+      }
+    }
+  };
+
+  // Determine overall status
+  const allConfigured = 
+    config.checks.deepgram.configured &&
+    config.checks.gemini.configured &&
+    config.checks.elevenlabs.configured &&
+    config.checks.appUrl.configured &&
+    config.checks.appUrl.isPublic &&
+    config.checks.mediaStreamHandler.initialized;
+
+  config.overallStatus = allConfigured ? 'READY ✅' : 'NOT READY ❌';
+  config.readyToMakeCalls = allConfigured;
+
+  // Add missing items
+  const missing = [];
+  if (!config.checks.deepgram.configured) missing.push('DEEPGRAM_API_KEY');
+  if (!config.checks.gemini.configured) missing.push('GOOGLE_GEMINI_API_KEY');
+  if (!config.checks.elevenlabs.configured) missing.push('ELEVEN_LABS_API_KEY or ELEVENLABS_API_KEY');
+  if (!config.checks.appUrl.configured) missing.push('APP_URL');
+  if (config.checks.appUrl.configured && !config.checks.appUrl.isPublic) {
+    missing.push('APP_URL must be public (not localhost)');
+  }
+
+  if (missing.length > 0) {
+    config.missingConfiguration = missing;
+    config.instructions = 'Configure missing environment variables in Railway dashboard';
+  }
+
+  res.json(config);
+});
+
+// Add this diagnostic endpoint too
+app.get('/api/test-voice-pipeline', async (req, res) => {
+  const results = {
+    timestamp: new Date().toISOString(),
+    tests: {}
+  };
+
+  // Test 1: Check if MediaStreamHandler exists
+  results.tests.mediaStreamHandler = {
+    exists: !!mediaStreamHandler,
+    canCreateSession: false
+  };
+
+  if (mediaStreamHandler) {
+    try {
+      // Test session creation (without actually connecting)
+      const testSession = {
+        callId: 'test-123',
+        agentPrompt: 'Test prompt',
+        agentVoiceId: '21m00Tcm4TlvDq8ikWAM',
+        ws: null // Mock WS
+      };
+      results.tests.mediaStreamHandler.canCreateSession = true;
+    } catch (err) {
+      results.tests.mediaStreamHandler.error = err.message;
+    }
+  }
+
+  // Test 2: Check Deepgram
+  results.tests.deepgram = {
+    configured: !!process.env.DEEPGRAM_API_KEY,
+    keyLength: process.env.DEEPGRAM_API_KEY ? process.env.DEEPGRAM_API_KEY.length : 0
+  };
+
+  // Test 3: Check Gemini
+  results.tests.gemini = {
+    configured: !!process.env.GOOGLE_GEMINI_API_KEY,
+    keyLength: process.env.GOOGLE_GEMINI_API_KEY ? process.env.GOOGLE_GEMINI_API_KEY.length : 0
+  };
+
+  // Test 4: Check ElevenLabs
+  const elevenLabsKey = process.env.ELEVEN_LABS_API_KEY || process.env.ELEVENLABS_API_KEY;
+  results.tests.elevenlabs = {
+    configured: !!elevenLabsKey,
+    keyLength: elevenLabsKey ? elevenLabsKey.length : 0
+  };
+
+  // Test 5: Test ElevenLabs TTS (optional - only if configured)
+  if (elevenLabsKey) {
+    try {
+      const testTTS = await fetch(
+        'https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM',
+        {
+          method: 'POST',
+          headers: {
+            'xi-api-key': elevenLabsKey,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            text: 'Test',
+            model_id: 'eleven_turbo_v2_5',
+            output_format: 'ulaw_8000'
+          })
+        }
+      );
+      
+      results.tests.elevenlabs.apiWorking = testTTS.ok;
+      results.tests.elevenlabs.apiStatus = testTTS.status;
+      
+      if (!testTTS.ok) {
+        const errorText = await testTTS.text();
+        results.tests.elevenlabs.apiError = errorText.substring(0, 200);
+      }
+    } catch (err) {
+      results.tests.elevenlabs.apiError = err.message;
+    }
+  }
+
+  // Overall assessment
+  const allPassed = 
+    results.tests.mediaStreamHandler.exists &&
+    results.tests.deepgram.configured &&
+    results.tests.gemini.configured &&
+    results.tests.elevenlabs.configured &&
+    (!results.tests.elevenlabs.apiWorking || results.tests.elevenlabs.apiWorking === true);
+
+  results.overallStatus = allPassed ? 'ALL TESTS PASSED ✅' : 'SOME TESTS FAILED ❌';
+  results.readyForCalls = allPassed;
+
+  res.json(results);
+});
 // Authentication endpoints
 // User login
 app.post('/api/auth/login', async (req, res) => {
