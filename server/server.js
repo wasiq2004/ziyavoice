@@ -3165,9 +3165,16 @@ app.get("/db-conn-status", async (req, res) => {
 });
 
 const server = require('http').createServer(app);
-// Start server and bind to 0.0.0.0 for Railway
+
+// Let express-ws handle WebSocket upgrades automatically
+// No custom upgrade handler needed!
+
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on port ${PORT}`);
   console.log(`Frontend URL: ${FRONTEND_URL}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log('');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('🎉 Server ready to accept Twilio WebSocket connections');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 });
