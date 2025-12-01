@@ -28,6 +28,7 @@ const { ElevenLabsStreamHandler } = require('./services/elevenLabsStreamHandler.
 const AdminService = require('./services/adminService.js');
 const WalletService = require('./services/walletService.js');
 const walletService = new WalletService(mysqlPool);
+const agentService = new AgentService(mysqlPool);
 
 // Init server
 const app = express();
@@ -64,8 +65,6 @@ if (process.env.DEEPGRAM_API_KEY && process.env.GOOGLE_GEMINI_API_KEY) {
 } else {
   console.warn("Voice call feature disabled — missing DEEPGRAM_API_KEY or GOOGLE_GEMINI_API_KEY");
 }
-
-const agentService = new AgentService(mysqlPool);
 
 // === ADD THIS BLOCK ===
 if (!process.env.ELEVEN_LABS_API_KEY) {
