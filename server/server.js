@@ -50,7 +50,6 @@ const campaignService = new CampaignService(mysqlPool);
 const authService = new AuthService(mysqlPool);
 const twilioService = new TwilioService();
 const twilioBasicService = new TwilioBasicService();
-const adminService = new AdminService(mysqlPool);
 //Import Google Sheets Service at the top of server.js
 const googleSheetsService = require('./services/googleSheetsService.js');
 // Initialize Google Sheets on server startup
