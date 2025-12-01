@@ -2345,10 +2345,6 @@ app.post('/api/voices/elevenlabs/preview', async (req, res) => {
 app.ws('/api/stt', function (ws, req) {
   elevenLabsStreamHandler.handleConnection(ws, req);
 });
-// WebSocket for Twilio → Deepgram → Gemini → ElevenLabs
-// ============================================================================
-// TWILIO WEBSOCKET ENDPOINT - FIXED VERSION
-// ============================================================================
 
 // WebSocket for Twilio Media Streams → Deepgram → Gemini → ElevenLabs
 app.ws('/api/call', (ws, req) => {
