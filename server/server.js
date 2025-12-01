@@ -3165,16 +3165,6 @@ app.get("/db-conn-status", async (req, res) => {
 });
 
 const server = require('http').createServer(app);
-
-server.on("upgrade", (req, socket, head) => {
-  if (req.url.startsWith("/api/call")) {
-    const wsInstance = expressWs.getWss();
-    wsInstance.handleUpgrade(req, socket, head, (ws) => {
-      wsInstance.emit("connection", ws, req);
-    });
-  }
-});
-
 // Start server and bind to 0.0.0.0 for Railway
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on port ${PORT}`);
