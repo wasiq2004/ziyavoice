@@ -3,6 +3,9 @@
 const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
 const { LLMService } = require("../llmService.js");
 const nodeFetch = require("node-fetch");
+const mysqlPool = require('../config/database.js');
+const AgentService = require('./agentService.js');
+const agentService = new AgentService(mysqlPool);
 
 const sessions = new Map();
 
@@ -73,27 +76,27 @@ class MediaStreamHandler {
             let agentVoiceId = "21m00Tcm4TlvDq8ikWAM";
             let greetingMessage = "Hello! How can I help you today?"; // ✅ NEW
 
-            if (agentId) {
-                try {
-                    const AgentService = require('./agentService.js');
-                    const agentService = new AgentService(require('../config/database.js').default);
-                    
-                    const agent = await agentService.getAgentById('system', agentId);
-                    if (agent) {
-                        agentPrompt = agent.identity || agent.prompt || agentPrompt;
-                        agentVoiceId = agent.voiceId || agentVoiceId;
-                        // ✅ NEW: Get greeting from agent settings
-                        if (agent.settings && agent.settings.greetingLine) {
-                            greetingMessage = agent.settings.greetingLine;
-                        }
-                        console.log(`✅ Loaded agent: ${agent.name}`);
-                    } else {
-                        console.warn(`⚠️  Agent ${agentId} not found, using defaults`);
-                    }
-                } catch (agentError) {
-                    console.error("Error loading agent:", agentError);
-                }
+       if (agentId) {
+    try {
+        // Use the shared agentService with the real DB pool
+        const agent = await agentService.getAgentById('system', agentId);
+        if (agent) {
+            agentPrompt = agent.identity || agent.prompt || agentPrompt;
+            agentVoiceId = agent.voiceId || agentVoiceId;
+
+            if (agent.settings && agent.settings.greetingLine) {
+                greetingMessage = agent.settings.greetingLine;
             }
+
+            console.log(`✅ Loaded agent for call ${callId}: ${agent.name}`);
+            console.log(`   Voice ID from agent: ${agentVoiceId}`);
+        } else {
+            console.warn(`⚠️ Agent ${agentId} not found, using default prompt + voice`);
+        }
+    } catch (agentError) {
+        console.error("❌ Error loading agent in MediaStreamHandler:", agentError);
+    }
+}
 
             const session = this.createSession(callId, agentPrompt, agentVoiceId, ws);
 
