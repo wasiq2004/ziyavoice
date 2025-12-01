@@ -33,7 +33,9 @@ const agentService = new AgentService(mysqlPool);
 // Init server
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
-expressWs(app);
+wsInstance.getWss()
+const wsInstance = expressWs(app);
+app.enable("trust proxy");
 
 // ADD THIS BLOCK HERE:
 console.log('=== ENVIRONMENT CHECK ===');
@@ -3046,8 +3048,19 @@ app.get("/db-conn-status", async (req, res) => {
   }
 });
 
+const server = require('http').createServer(app);
+
+server.on("upgrade", (req, socket, head) => {
+  if (req.url.startsWith("/api/call")) {
+    const wsInstance = expressWs.getWss();
+    wsInstance.handleUpgrade(req, socket, head, (ws) => {
+      wsInstance.emit("connection", ws, req);
+    });
+  }
+});
+
 // Start server and bind to 0.0.0.0 for Railway
-app.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on port ${PORT}`);
   console.log(`Frontend URL: ${FRONTEND_URL}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
