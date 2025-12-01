@@ -8,6 +8,7 @@ const expressWs = require('express-ws');
 const { v4: uuidv4 } = require('uuid');
 const twilio = require('twilio');
 
+
 // Load environment variables
 const envPath = process.env.NODE_ENV === 'production'
   ? path.resolve(__dirname, '.env')
@@ -29,6 +30,7 @@ const AdminService = require('./services/adminService.js');
 const WalletService = require('./services/walletService.js');
 const walletService = new WalletService(mysqlPool);
 const agentService = new AgentService(mysqlPool);
+const adminService = new AdminService(mysqlPool);
 
 // Init server
 const app = express();
@@ -2345,13 +2347,133 @@ app.ws('/api/stt', function (ws, req) {
   elevenLabsStreamHandler.handleConnection(ws, req);
 });
 // WebSocket for Twilio → Deepgram → Gemini → ElevenLabs
+// ============================================================================
+// TWILIO WEBSOCKET ENDPOINT - FIXED VERSION
+// ============================================================================
+
+// WebSocket for Twilio Media Streams → Deepgram → Gemini → ElevenLabs
 app.ws('/api/call', (ws, req) => {
+  const callId = req.query?.callId || 'unknown';
+  const agentId = req.query?.agentId || 'unknown';
+  const contactId = req.query?.contactId || 'unknown';
+  
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('🔌 TWILIO WEBSOCKET CONNECTION ATTEMPT');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('   URL:', req.url);
+  console.log('   Call ID:', callId);
+  console.log('   Agent ID:', agentId);
+  console.log('   Contact ID:', contactId);
+  console.log('   IP:', req.headers['x-forwarded-for'] || req.connection.remoteAddress);
+  console.log('   Headers:', JSON.stringify(req.headers, null, 2));
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  
+  // Check if MediaStreamHandler is initialized
   if (!mediaStreamHandler) {
+    console.error('❌ FATAL: MediaStreamHandler is NOT initialized!');
+    console.error('   Missing API keys:');
+    console.error('   - DEEPGRAM_API_KEY:', process.env.DEEPGRAM_API_KEY ? '✅ Set' : '❌ Missing');
+    console.error('   - GOOGLE_GEMINI_API_KEY:', process.env.GOOGLE_GEMINI_API_KEY ? '✅ Set' : '❌ Missing');
+    console.error('   - ELEVEN_LABS_API_KEY:', process.env.ELEVEN_LABS_API_KEY ? '✅ Set' : '❌ Missing');
+    
+    // Send error message to Twilio before closing
+    ws.send(JSON.stringify({
+      event: 'error',
+      message: 'Voice pipeline not configured. Missing API keys.'
+    }));
+    
     ws.close();
     return;
   }
-  mediaStreamHandler.handleConnection(ws, req);
+  
+  console.log('✅ MediaStreamHandler initialized, passing connection...');
+  
+  // Log all incoming messages for debugging
+  ws.on('message', (message) => {
+    try {
+      const data = JSON.parse(message);
+      console.log('📨 Twilio Event:', data.event, '| StreamSid:', data.streamSid || 'N/A');
+      
+      // Log key events with more detail
+      if (data.event === 'start') {
+        console.log('🎬 STREAM STARTED:', JSON.stringify(data, null, 2));
+      } else if (data.event === 'stop') {
+        console.log('🛑 STREAM STOPPED:', JSON.stringify(data, null, 2));
+      } else if (data.event === 'media') {
+        console.log('🎵 MEDIA CHUNK | Payload length:', data.media?.payload?.length || 0);
+      }
+    } catch (err) {
+      console.log('📨 Raw Twilio Message:', message.toString().substring(0, 200));
+    }
+  });
+  
+  ws.on('close', (code, reason) => {
+    console.log('🔌 Twilio WebSocket CLOSED | Code:', code, '| Reason:', reason || 'No reason');
+  });
+  
+  ws.on('error', (error) => {
+    console.error('❌ Twilio WebSocket ERROR:', error);
+  });
+  
+  // Pass to MediaStreamHandler
+  try {
+    mediaStreamHandler.handleConnection(ws, req);
+    console.log('✅ Connection handed off to MediaStreamHandler');
+  } catch (err) {
+    console.error('❌ Error in MediaStreamHandler.handleConnection:', err);
+    ws.close();
+  }
 });
+
+// ============================================================================
+// STARTUP VALIDATION - ADD THIS RIGHT AFTER SERVER INITIALIZATION
+// ============================================================================
+
+console.log('');
+console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+console.log('🚀 VOICE PIPELINE CONFIGURATION CHECK');
+console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+// Check APP_URL
+const appUrl = process.env.APP_URL;
+if (!appUrl) {
+  console.error('❌ CRITICAL: APP_URL is not set!');
+  console.error('   Set it in Railway dashboard: APP_URL=https://your-app.up.railway.app');
+} else if (appUrl.includes('localhost') || appUrl.includes('127.0.0.1')) {
+  console.error('❌ CRITICAL: APP_URL is localhost!');
+  console.error('   Current value:', appUrl);
+  console.error('   Twilio REQUIRES a public URL. Use your Railway deployment URL.');
+} else {
+  console.log('✅ APP_URL:', appUrl);
+}
+
+// Check API Keys
+console.log('');
+console.log('API Keys:');
+console.log('   DEEPGRAM_API_KEY:', process.env.DEEPGRAM_API_KEY ? '✅ Set' : '❌ Missing');
+console.log('   GOOGLE_GEMINI_API_KEY:', process.env.GOOGLE_GEMINI_API_KEY ? '✅ Set' : '❌ Missing');
+console.log('   ELEVEN_LABS_API_KEY:', process.env.ELEVEN_LABS_API_KEY ? '✅ Set' : '❌ Missing');
+
+// Check MediaStreamHandler
+console.log('');
+console.log('MediaStreamHandler:', mediaStreamHandler ? '✅ Initialized' : '❌ NOT Initialized');
+
+// Overall status
+const allGood = appUrl && 
+                !appUrl.includes('localhost') && 
+                process.env.DEEPGRAM_API_KEY && 
+                process.env.GOOGLE_GEMINI_API_KEY && 
+                process.env.ELEVEN_LABS_API_KEY &&
+                mediaStreamHandler;
+
+console.log('');
+if (allGood) {
+  console.log('🎉 ALL SYSTEMS GO - Ready to receive Twilio calls!');
+} else {
+  console.log('⚠️  VOICE PIPELINE NOT READY - Fix the issues above');
+}
+console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+console.log('');
 // WebSocket endpoint for voice stream (frontend voice chat + Twilio calls)
 app.ws('/voice-stream', async function (ws, req) {  // ✅ ADDED async
   console.log('New voice stream connection established');
