@@ -33,7 +33,6 @@ const agentService = new AgentService(mysqlPool);
 // Init server
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
-wsInstance.getWss()
 const wsInstance = expressWs(app);
 app.enable("trust proxy");
 
