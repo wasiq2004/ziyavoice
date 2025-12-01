@@ -1,0 +1,14 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "npm start"
+healthcheckPath = "/health"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# Critical WebSocket configuration
+[[deploy.environmentVariables]]
+name = "RAILWAY_ENABLE_WEBSOCKETS"
+value = "true"
