@@ -2909,38 +2909,38 @@ app.post('/api/campaigns/:id/start', async (req, res) => {
       return res.status(400).json({ success: false, message: 'User ID is required' });
     }
     
-    // Get campaign details
     const campaign = await campaignService.getCampaign(id, userId);
-    
     if (!campaign) {
       return res.status(404).json({ success: false, message: 'Campaign not found' });
     }
-    
-    if (!campaign.callerPhone) {
+
+    // ✅ Support both DB shapes
+    const callerPhone = campaign.callerPhone || campaign.caller_phone;
+    const agentId = campaign.agentId || campaign.agent_id;
+
+    if (!callerPhone) {
       return res.status(400).json({ 
         success: false, 
         message: 'Please set a caller phone number before starting the campaign' 
       });
     }
     
-    if (!campaign.agentId) {
+    if (!agentId) {
       return res.status(400).json({ 
         success: false, 
         message: 'Please select an agent for this campaign' 
       });
     }
     
-    // Update campaign status to running
     await campaignService.startCampaign(id, userId);
-    
-    // Get all pending records
+
     const [records] = await mysqlPool.execute(
       'SELECT id, phone FROM campaign_records WHERE campaign_id = ? AND call_status = ?',
       [id, 'pending']
     );
-    
-    // Start making calls asynchronously
-    processCampaignCalls(id, userId, campaign, records);
+
+    // ✅ Pass normalized agentId + callerPhone into the processor
+    processCampaignCalls(id, userId, { ...campaign, callerPhone, agentId }, records);
     
     res.json({ 
       success: true, 
@@ -2953,6 +2953,7 @@ app.post('/api/campaigns/:id/start', async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 });
+
 
 // Stop campaign
 app.post('/api/campaigns/:id/stop', async (req, res) => {
