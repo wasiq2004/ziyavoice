@@ -2474,53 +2474,52 @@ if (allGood) {
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 console.log('');
 // WebSocket endpoint for voice stream (frontend voice chat + Twilio calls)
-app.ws('/voice-stream', async function (ws, req) {  // ✅ ADDED async
-  console.log('New voice stream connection established');
-  let audioChunksReceived = 0;
-  const audioBuffer = [];
-  let isProcessing = false; // Flag to prevent overlapping responses
-  const deepgramApiKey = process.env.DEEPGRAM_API_KEY;
-  const geminiApiKey = process.env.GOOGLE_GEMINI_API_KEY;
-  const elevenLabsApiKey = process.env.ELEVEN_LABS_API_KEY || process.env.VITE_ELEVEN_LABS_API_KEY;
+app.ws('/voice-stream', async function (ws, req) {
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('🎤 FRONTEND VOICE CHAT CONNECTION RECEIVED!');
+  console.log('   URL:', req.url);
+  console.log('   Query:', req.query);
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+  const { voiceId, agentId, identity, userId } = req.query;
   
-  // Determine if this is a Twilio call or frontend chat
-  const callId = req.query?.callId;
-  const agentId = req.query?.agentId;
-  const voiceId = req.query?.voiceId;
-  const identity = req.query?.identity ? decodeURIComponent(req.query.identity) : null;
-  const userId = req.query?.userId; // ✅ ADDED - Get userId from query params
-  const isTwilioCall = !!(callId && agentId);
-  const isFrontendChat = !!(voiceId && !callId);
-  
-  console.log('Connection type:', isTwilioCall ? 'Twilio Call' : isFrontendChat ? 'Frontend Chat' : 'Unknown');
-  console.log('Query params:', { voiceId, agentId, callId, userId, identity: identity ? 'present' : 'missing' });
-  console.log('Call ID:', callId);
-  console.log('Agent ID:', agentId);
-  console.log('User ID:', userId);
-  
-  // Map voice names to ElevenLabs voice IDs
-  const voiceIdMap = {
-    'eleven-rachel': '21m00Tcm4TlvDq8ikWAM',      // Rachel - Professional female
-    'eleven-domi': 'AZnzlk1mvXvNF0XQwSqT',         // Domi - Warm male
-    'eleven-bella': 'EXAVITQu4vr4xnSDxMaL',         // Bella - Bright female
-    'eleven-antoni': 'ErXwobaYp0eMQ54XLiQy',        // Antoni - Deep male
-    'eleven-elli': 'MF3mGyEYCHltNiPm4XZK',         // Elli - Expressive female
-    'eleven-josh': 'TxGEqnHWrfWFTfGW9XjX',         // Josh - Strong male
-    'eleven-arnold': 'VR6AewLVsFNTJdrC4xPG',       // Arnold - Deep US male
-    'eleven-adam': 'pFZP5JQG7iQjIQuC4Hyc',        // Adam - Deep UK male
-    'eleven-sam': 'yoZ06aMxZJJ28mfd3POQ'          // Sam - Conversational male
-  };
-  
-  // Get agent voice ID from query params or use default
-  let voiceIdentifier = voiceId || 'eleven-rachel';
-  // Map the voice identifier to actual ElevenLabs voice ID
-  let agentVoiceId = voiceIdMap[voiceIdentifier] || voiceIdentifier;
-  // Initialize agent identity and name
-  // For frontend chat, use identity from query params if provided
-  let agentIdentity = identity || 'You are a helpful AI assistant.';
-  let agentName = 'AI Assistant';
-  console.log('Voice identifier:', voiceIdentifier);
-  console.log('Using ElevenLabs voice ID:', agentVoiceId);
+  // Send ready message
+  ws.send(JSON.stringify({
+    event: 'ready',
+    message: 'Voice stream connected',
+    agentId,
+    voiceId
+  }));
+
+  // Handle incoming messages
+  ws.on('message', async (message) => {
+    try {
+      const data = JSON.parse(message);
+      console.log('📨 Frontend message:', data.event);
+
+      if (data.event === 'audio') {
+        // Process audio from frontend
+        console.log('🎵 Received audio chunk');
+        
+        // TODO: Process audio with Deepgram → Gemini → ElevenLabs
+        // This is where your voice pipeline logic goes
+        
+      } else if (data.event === 'ping') {
+        ws.send(JSON.stringify({ event: 'pong' }));
+      }
+    } catch (error) {
+      console.error('❌ Error processing message:', error);
+    }
+  });
+
+  ws.on('close', () => {
+    console.log('🔌 Frontend voice chat closed');
+  });
+
+  ws.on('error', (error) => {
+    console.error('❌ Frontend WebSocket error:', error);
+  });
+});
   
   // For Twilio calls, fetch agent voice and identity from database if agentId is provided
   if (agentId) {
