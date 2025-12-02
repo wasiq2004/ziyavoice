@@ -1158,7 +1158,40 @@ app.post('/api/validate-api-key', async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 });
+app.post("/api/twilio/make-call", async (req, res) => {
+  try {
+    const { userId, twilioNumberId, to, agentId } = req.body;
 
+    if (!userId || !twilioNumberId || !to || !agentId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Missing required fields" 
+      });
+    }
+
+    const callId = uuidv4();
+    const cleanAppUrl = process.env.APP_URL;
+
+    const call = await twilioService.createCall({
+      userId: userId,
+      twilioNumberId: twilioNumberId,
+      to: to,
+      agentId: agentId,
+      callId: callId,
+      appUrl: cleanAppUrl
+    });
+
+    return res.json({
+      success: true,
+      callId,
+      twilioCallSid: call.sid
+    });
+
+  } catch (err) {
+    console.error("❌ Error creating Twilio call:", err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 // ElevenLabs voices endpoint - fetch all voices from ElevenLabs API
 app.get('/api/voices/elevenlabs', async (req, res) => {
   try {
