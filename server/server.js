@@ -3184,3 +3184,13 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('🎉 Server ready to accept Twilio WebSocket connections');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 });
+server.on('upgrade', (req, socket, head) => {
+  if (req.url.startsWith('/api/call')) {
+    console.log('🔄 WS upgrade detected for Twilio');
+
+    const wss = expressWs.getWss('/api/call');
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req);
+    });
+  }
+});
