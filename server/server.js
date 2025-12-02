@@ -5,7 +5,6 @@ const path = require('path');
 const mysqlPool = require('./config/database.js');
 const nodeFetch = require('node-fetch');
 const http = require('http');
-const expressWs = require('express-ws')(app, server);
 const { v4: uuidv4 } = require('uuid');
 const twilio = require('twilio');
 
@@ -38,6 +37,7 @@ const app = express();
 const PORT = Number(process.env.PORT) || 5000;
 const wsInstance = expressWs(app);
 app.enable("trust proxy");
+const expressWs = require('express-ws')(app, server);
 
 // ADD THIS BLOCK HERE:
 console.log('=== ENVIRONMENT CHECK ===');
