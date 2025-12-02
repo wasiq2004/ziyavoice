@@ -2842,7 +2842,6 @@ app.ws('/voice-stream', async function (ws, req) {
   ws.on('error', (error) => {
     console.error('Voice stream WebSocket error:', error);
   });
-});
 
 // Twilio number management endpoints
 // Add a Twilio number for a user
