@@ -36,9 +36,7 @@ const adminService = new AdminService(mysqlPool);
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
 app.enable("trust proxy");
-const http = require('http');
 const server = http.createServer(app);
-
 const expressWs = require('express-ws')(app, server);
 const wsInstance = expressWs; // optional but fine
 
