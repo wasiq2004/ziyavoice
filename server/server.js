@@ -1709,11 +1709,16 @@ app.post('/api/twilio/make-call', async (req, res) => {
   try {
     const { userId, from, to, agentId } = req.body;
     
+    console.log('📞 ============ MANUAL CALL REQUEST ============');
+    console.log('   User ID:', userId);
+    console.log('   From (Twilio Number ID):', from);
+    console.log('   To:', to);
+    console.log('   Agent ID:', agentId);
+    
     if (!userId) {  
       return res.status(400).json({ success: false, message: 'User ID is required' });
     }
     
-    // Validate user ID format (UUID)
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
       return res.status(400).json({ success: false, message: 'User ID must be a valid UUID' });
     }
@@ -1730,13 +1735,9 @@ app.post('/api/twilio/make-call', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Agent ID is required' });
     }
     
-    // Get all verified Twilio numbers for this user
     const userTwilioNumbers = await twilioService.getVerifiedNumbers(userId);
-    
-    // Find the Twilio number record by ID (from is a UUID from user_twilio_numbers.id)
     let twilioNumber = userTwilioNumbers.find(num => num.id === from);
     
-    // If not found by ID, try finding by phone number (fallback)
     if (!twilioNumber) {
       twilioNumber = userTwilioNumbers.find(num => num.phoneNumber === from);
     }
@@ -1748,10 +1749,8 @@ app.post('/api/twilio/make-call', async (req, res) => {
       });
     }
     
-    // Extract the actual phone number from the twilioNumber object
     const fromPhoneNumber = twilioNumber.phoneNumber;
     
-    // Validate phone number formats
     if (!/^\+?[1-9]\d{1,14}$/.test(fromPhoneNumber)) {
       return res.status(400).json({ 
         success: false, 
@@ -1766,33 +1765,29 @@ app.post('/api/twilio/make-call', async (req, res) => {
       });
     }
     
-    // Generate a unique call ID
     const callId = require('uuid').v4();
+    const appUrl = process.env.APP_URL;
+
+    if (!appUrl) {
+      console.error('ERROR: APP_URL environment variable is not set!');
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Server configuration error: APP_URL is not configured.' 
+      });
+    }
+
+    if (appUrl.includes('localhost') || appUrl.includes('127.0.0.1')) {
+      console.error('ERROR: APP_URL is set to localhost!');
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Server must use a public URL for Twilio calls.' 
+      });
+    }
+
+    const cleanAppUrl = appUrl.replace(/\/$/, '');
+    console.log('   ✅ Using APP_URL:', cleanAppUrl);
     
-   // Get app URL for callbacks - MUST be a public URL for Twilio
-const appUrl = process.env.APP_URL;
-
-if (!appUrl) {
-  console.error('ERROR: APP_URL environment variable is not set!');
-  return res.status(500).json({ 
-    success: false, 
-    message: 'Server configuration error: APP_URL is not configured. Please contact administrator.' 
-  });
-}
-
-if (appUrl.includes('localhost') || appUrl.includes('127.0.0.1')) {
-  console.error('ERROR: APP_URL is set to localhost, but Twilio requires a public URL!');
-  return res.status(500).json({ 
-    success: false, 
-    message: 'Server configuration error: APP_URL must be a public URL, not localhost. Please use ngrok or deploy to Railway.' 
-  });
-}
-
-const cleanAppUrl = appUrl.replace(/\/$/, '');
-console.log('Using APP_URL for Twilio webhooks:', cleanAppUrl);
-    
-    // Get or create phone_numbers entry for the from number
-    const database = require('./config/database.js').default;
+    const database = mysqlPool;
     
     const [phoneRows] = await database.execute(
       'SELECT id FROM phone_numbers WHERE user_id = ? AND phone_number = ?',
@@ -1803,7 +1798,6 @@ console.log('Using APP_URL for Twilio webhooks:', cleanAppUrl);
     if (phoneRows.length > 0) {
       phoneNumberId = phoneRows[0].id;
     } else {
-      // Create phone_numbers entry if it doesn't exist
       phoneNumberId = require('uuid').v4();
       await database.execute(
         `INSERT INTO phone_numbers 
@@ -1811,9 +1805,9 @@ console.log('Using APP_URL for Twilio webhooks:', cleanAppUrl);
         VALUES (?, ?, ?, 'twilio', 'twilio', NOW())`,
         [phoneNumberId, userId, fromPhoneNumber]
       );
+      console.log('   ✅ Created phone_numbers entry');
     }
     
-    // Create call record in database with the ACTUAL PHONE NUMBER
     await database.execute(
       `INSERT INTO calls 
       (id, phone_number_id, user_id, agent_id, from_number, to_number, status, twilio_number_id, started_at)
@@ -1821,8 +1815,8 @@ console.log('Using APP_URL for Twilio webhooks:', cleanAppUrl);
       [callId, phoneNumberId, userId, agentId, fromPhoneNumber, to, twilioNumber.id]
     );
     
-    // Create the actual Twilio call
-    // twilioService.createCall will use twilioNumber.phoneNumber internally
+    console.log('   ✅ Created call record:', callId);
+    
     const call = await twilioService.createCall({
       userId: userId,
       twilioNumberId: twilioNumber.id,
@@ -1832,13 +1826,15 @@ console.log('Using APP_URL for Twilio webhooks:', cleanAppUrl);
       appUrl: cleanAppUrl
     });
     
-    // Update call record with Twilio call SID
+    console.log('   ✅ Twilio call created:', call.sid);
+    
     await database.execute(
       'UPDATE calls SET call_sid = ? WHERE id = ?', 
       [call.sid, callId]
     );
     
-    // Return success response
+    console.log('📞 ============ CALL INITIATED SUCCESSFULLY ============');
+    
     res.json({ 
       success: true, 
       data: {
@@ -1856,7 +1852,7 @@ console.log('Using APP_URL for Twilio webhooks:', cleanAppUrl);
     });
     
   } catch (error) {
-    console.error('Error making Twilio call:', error);
+    console.error('❌ Error making Twilio call:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
