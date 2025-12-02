@@ -85,6 +85,7 @@ const FRONTEND_URL = "https://benevolent-custard-76836b.netlify.app";
 const corsOptions = {
   origin: [
     FRONTEND_URL,
+    "https://ziyavoiceagent.great-site.net",
     /\.netlify\.app$/
   ],
   credentials: true,
