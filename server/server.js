@@ -5,7 +5,6 @@ const path = require('path');
 const mysqlPool = require('./config/database.js');
 const nodeFetch = require('node-fetch');
 const http = require('http');
-const server = http.createServer(app);
 const expressWs = require('express-ws')(app, server);
 const { v4: uuidv4 } = require('uuid');
 const twilio = require('twilio');
