@@ -36,7 +36,12 @@ const adminService = new AdminService(mysqlPool);
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
 app.enable("trust proxy");
+const http = require('http');
+const server = http.createServer(app);
+
 const expressWs = require('express-ws')(app, server);
+const wsInstance = expressWs; // optional but fine
+
 
 // ADD THIS BLOCK HERE:
 console.log('=== ENVIRONMENT CHECK ===');
@@ -3167,12 +3172,8 @@ app.get("/db-conn-status", async (req, res) => {
     res.json({ success: false, error: error.message || "No message" });
   }
 });
-
-const server = require('http').createServer(app);
-
 // Let express-ws handle WebSocket upgrades automatically
 // No custom upgrade handler needed!
-
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on port ${PORT}`);
   console.log(`Frontend URL: ${FRONTEND_URL}`);
